@@ -47,6 +47,8 @@ export function TopBar() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // 弹层开着时不要抢焦点到遮罩后面的搜索框
+      if (useUi.getState().dialog) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         inputRef.current?.focus();

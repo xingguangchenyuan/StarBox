@@ -198,6 +198,8 @@ export default function App() {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
       if (useUi.getState().dialog) return;
+      // 右键菜单 / 下拉菜单打开时，方向键和快捷键归菜单自己处理
+      if (document.querySelector(".ctx-menu")) return;
       const store = useApp.getState();
       const active = document.activeElement as HTMLElement | null;
 
@@ -260,6 +262,8 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       // 截图查看器打开时，Esc 只关它，不要顺带退出游戏详情
       if (document.querySelector(".lightbox")) return;
+      // 右键菜单打开时，Esc 只关菜单（ContextMenu 自己的监听负责），不要退回游戏库
+      if (document.querySelector(".ctx-menu")) return;
       if (e.key === "Escape" && !useUi.getState().dialog && useApp.getState().selectedId) {
         select(null);
       }

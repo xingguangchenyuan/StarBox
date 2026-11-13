@@ -14,14 +14,19 @@ const UA: &str = "StarBox/0.1 (+https://github.com/starbox)";
 /// `key=...`、`token=...` 查询参数替换掉。reqwest 的错误默认带完整 URL，
 /// Steam Web API 的 Key 就在 query 里，不能原样抛给前端。
 fn redact_text(mut text: String) -> String {
-    for name in ["key=", "token=", "access_token="] {
-        while let Some(pos) = text.find(name) {
-            let start = pos + name.len();
+    for name in ["access_token=", "key=", "token="] {
+        // 从上次替换结束的位置继续找：替换后的 "***" 里不含 name，
+        // 但等号与 name 本身还在文本里，不推进游标会原地死循环。
+        let mut from = 0usize;
+        while from < text.len() {
+            let Some(rel) = text[from..].find(name) else { break };
+            let start = from + rel + name.len();
             let end = text[start..]
                 .find(|c: char| c == '&' || c == ' ' || c == '"' || c == '\'' || c == ')' || c == '\n')
                 .map(|n| start + n)
                 .unwrap_or(text.len());
             text.replace_range(start..end, "***");
+            from = (start + 3).min(text.len());
         }
     }
     text
@@ -150,6 +155,22 @@ mod tests {
         let out = redact_text(text.to_string());
         assert!(!out.contains("ABC123"));
         assert!(out.contains("key=***"));
+    }
+
+    // 回归：替换后文本里仍有 "key=" 字样，旧实现会在原地无限循环
+    #[test]
+    fn redacts_multiple_params_without_hanging() {
+        let text = "a?key=AAA&key=BBB&token=CCC&access_token=DDD".to_string();
+        let out = redact_text(text);
+        for secret in ["AAA", "BBB", "CCC", "DDD"] {
+            assert!(!out.contains(secret), "未脱敏：{out}");
+        }
+    }
+
+    #[test]
+    fn redacts_value_at_end_of_text() {
+        let out = redact_text("https://x/y?key=".to_string());
+        assert_eq!(out, "https://x/y?key=***");
     }
 }
 

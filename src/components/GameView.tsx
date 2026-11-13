@@ -405,10 +405,13 @@ export function GameView({ gameId }: { gameId: string }) {
                   return false;
                 }
                 void (async () => {
-                  await api.deleteGame(game.id);
-                  select(null);
-                  await reload();
-                  toast.info(t("toast.removed"), game.title);
+                  try {
+                    // 走 store：运行中的游戏会先结束进程，再删库并清会话
+                    await useApp.getState().removeGame(game.id);
+                    toast.info(t("toast.removed"), game.title);
+                  } catch (e) {
+                    toast.warn("移除失败", String(e));
+                  }
                 })();
               },
             },
