@@ -59,24 +59,29 @@ export function ModsPane({ game }: { game: Game }) {
           {dir ?? "— 未指定目录"}
         </span>
         <div className="spacer" />
-        <button className="chip" onClick={chooseDir}>
+        {mods.length > 0 && (
+          <span className="mod-count">
+            已启用 {mods.filter((m) => m.enabled).length} / {mods.length}
+          </span>
+        )}
+        <button className="ghost-mini" onClick={chooseDir}>
           <IconFolder size={11} />
           {mods.length ? "更换目录" : t("mod.choose")}
         </button>
-        <button className="chip is-on" onClick={() => void load(true)} disabled={loading}>
+        <button className="btn-secondary sm" onClick={() => void load(true)} disabled={loading}>
           <IconRefresh size={11} />
           {loading ? "扫描中…" : t("mod.rescan")}
         </button>
         {dir && (
-          <button className="chip" onClick={() => void api.revealInExplorer(dir)}>
-            {t("mod.open")}
+          <button className="icon-btn sm" title={t("mod.open")} aria-label={t("mod.open")} onClick={() => void api.revealInExplorer(dir)}>
+            <IconFolder size={13} />
           </button>
         )}
       </div>
 
       {mods.length > 0 ? (
         <div className="mods">
-          {mods.map((m, i) => (
+          {mods.map((m) => (
             <div className={`mod${m.enabled ? "" : " is-off"}`} key={m.id}>
               <button
                 className={`switch${m.enabled ? " is-on" : ""}`}
@@ -89,7 +94,6 @@ export function ModsPane({ game }: { game: Game }) {
                 <div className="mn">{m.name}</div>
                 <div className="mv">{m.version ?? m.dirName}</div>
               </div>
-              <span className="order">{String(i + 1).padStart(2, "0")}</span>
               <span className="sz">{fmtBytes(m.sizeBytes)}</span>
             </div>
           ))}

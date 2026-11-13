@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, MotionConfig } from "framer-motion";
 import { Rail } from "@/components/Rail";
 import { LibraryView } from "@/components/LibraryView";
 import { GameView } from "@/components/GameView";
@@ -139,6 +139,122 @@ export default function App() {
     return () => dispose?.();
   }, []);
 
+  // 减少动效：设置项或系统偏好任一开启即生效
+  const reduceMotion = useApp((s) => s.settings?.reduceMotion ?? false);
+  const [systemReduce, setSystemReduce] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setSystemReduce(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  const calm = reduceMotion || systemReduce;
+  useEffect(() => {
+    document.documentElement.dataset.reduceMotion = calm ? "true" : "false";
+  }, [calm]);
+
+  // 键盘：方向键走封面墙 / 列表 / 侧栏，1–4 切页签，F 收藏，Ctrl+Enter 启动
+  useEffect(() => {
+    const isArrow = (key: string) =>
+      key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp" || key === "ArrowDown";
+
+    // 一维列表（侧栏 / 列表视图）只做前后移动
+    const moveLinear = (nodes: HTMLElement[], current: HTMLElement, key: string) => {
+      const i = Math.max(0, nodes.indexOf(current));
+      const step = key === "ArrowUp" || key === "ArrowLeft" ? -1 : 1;
+      const next = nodes[Math.min(nodes.length - 1, Math.max(0, i + step))];
+      next?.focus();
+      next?.scrollIntoView({ block: "nearest" });
+    };
+
+    // 封面墙按几何位置找最近卡片，列数变化时也不会跑丢
+    const moveGrid = (nodes: HTMLElement[], current: HTMLElement, key: string) => {
+      const cr = current.getBoundingClientRect();
+      let best: HTMLElement | null = null;
+      let bestScore = Infinity;
+      for (const c of nodes) {
+        if (c === current) continue;
+        const r = c.getBoundingClientRect();
+        const dx = r.left - cr.left;
+        const dy = r.top - cr.top;
+        let ok = false;
+        if (key === "ArrowLeft") ok = dx < -4 && Math.abs(dy) < r.height / 2;
+        if (key === "ArrowRight") ok = dx > 4 && Math.abs(dy) < r.height / 2;
+        if (key === "ArrowUp") ok = dy < -4 && Math.abs(dx) < r.width / 2;
+        if (key === "ArrowDown") ok = dy > 4 && Math.abs(dx) < r.width / 2;
+        if (!ok) continue;
+        const score = Math.abs(dx) + Math.abs(dy);
+        if (score < bestScore) {
+          bestScore = score;
+          best = c;
+        }
+      }
+      if (best) best.focus();
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (useUi.getState().dialog) return;
+      const store = useApp.getState();
+      const active = document.activeElement as HTMLElement | null;
+
+      // 侧栏列表在库视图和详情页都常驻，方向键都能走
+      if (isArrow(e.key) && active?.closest(".rail .games")) {
+        const nodes = Array.from(document.querySelectorAll<HTMLElement>("[data-rail-game]"));
+        if (nodes.includes(active)) {
+          e.preventDefault();
+          moveLinear(nodes, active, e.key);
+          return;
+        }
+      }
+
+      if (store.selectedId) {
+        const tabs = ["overview", "ach", "mod", "opts"] as const;
+        const idx = Number(e.key) - 1;
+        if (idx >= 0 && idx < tabs.length && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          store.setTab(tabs[idx]);
+          return;
+        }
+        if (e.key.toLowerCase() === "f" && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          void store.toggleFavorite(store.selectedId);
+          return;
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          void store.launch(store.selectedId).then((res) => {
+            if (!res.ok) toast.warn("启动失败", res.error ?? "", "启动");
+          });
+          return;
+        }
+        return;
+      }
+
+      if (!isArrow(e.key)) return;
+      const nodes = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          store.viewMode === "grid" ? "[data-game-card]" : "[data-game-row]",
+        ),
+      );
+      if (!nodes.length) return;
+      if (!active || !nodes.includes(active)) {
+        e.preventDefault();
+        nodes[0].focus();
+        nodes[0].scrollIntoView({ block: "nearest" });
+        return;
+      }
+      e.preventDefault();
+      if (store.viewMode === "grid") moveGrid(nodes, active, e.key);
+      else moveLinear(nodes, active, e.key);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Esc 返回游戏库；Ctrl+K 回到库并聚焦搜索
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -162,84 +278,72 @@ export default function App() {
 
   const onDropZoneClick = useCallback(() => setDragOver(false), []);
 
+  // 首屏不要白屏：按真实布局画骨架（侧栏 8 行、封面墙 2 排）
+  if (booting && !ready) return <BootSkeleton />;
+
   return (
-    <div className="app">
-      <Rail />
-      <main className="stage">
-        {selectedId ? <GameView gameId={selectedId} /> : <LibraryView />}
-      </main>
+    <MotionConfig reducedMotion={calm ? "always" : "user"}>
+      <div className="app">
+        <Rail />
+        <main className="stage">
+          {selectedId ? <GameView gameId={selectedId} /> : <LibraryView />}
+        </main>
 
-      <Toasts />
+        <Toasts />
 
-      <AnimatePresence>
-        {dialog === "add" && <AddGameDialog key="add" />}
-        {dialog === "scan" && <ScanDialog key="scan" />}
-        {dialog === "settings" && <SettingsDialog key="settings" />}
-        {dialog === "match" && matchGame && <MatchSteamDialog key={`match-${matchGame.id}`} game={matchGame} />}
-      </AnimatePresence>
+        <AnimatePresence>
+          {dialog === "add" && <AddGameDialog key="add" />}
+          {dialog === "scan" && <ScanDialog key="scan" />}
+          {dialog === "settings" && <SettingsDialog key="settings" />}
+          {dialog === "match" && matchGame && <MatchSteamDialog key={`match-${matchGame.id}`} game={matchGame} />}
+        </AnimatePresence>
 
-      <AnimatePresence>
-        {dragOver && (
-          <div
-            onClick={onDropZoneClick}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 150,
-              background: "rgba(6,12,18,.78)",
-              backdropFilter: "blur(2px)",
-              display: "grid",
-              placeItems: "center",
-              pointerEvents: "auto",
-            }}
-          >
-            <div
-              style={{
-                border: "1.5px dashed rgba(102,192,244,.55)",
-                borderRadius: 14,
-                padding: "40px 56px",
-                textAlign: "center",
-                background: "rgba(22,32,45,.55)",
-              }}
-            >
-              <IconDownload size={26} />
-              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 12 }}>松手就加入游戏库</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 6 }}>
-                拖入 exe，或整个游戏文件夹
+        <AnimatePresence>
+          {dragOver && (
+            <div className="drop-overlay" onClick={onDropZoneClick}>
+              <div className="drop-box">
+                <IconDownload size={26} />
+                <div className="drop-title">松手就加入游戏库</div>
+                <div className="drop-hint">拖入 exe，或整个游戏文件夹</div>
               </div>
             </div>
-          </div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>
+      </div>
+    </MotionConfig>
+  );
+}
 
-      {booting && !ready && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 200,
-            background: "var(--bg)",
-            display: "grid",
-            placeItems: "center",
-            color: "var(--text-3)",
-            fontSize: 11.5,
-            letterSpacing: "0.18em",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: 9,
-                background: "var(--hi)",
-                animation: "breathe 1.2s ease-in-out infinite",
-              }}
-            />
-            正在打开星匣…
-          </div>
+function BootSkeleton() {
+  return (
+    <div className="app boot-skel" aria-busy="true" aria-label="正在加载游戏库">
+      <aside className="rail">
+        <div className="brand">
+          <div className="skeleton sk-mark" />
+          <div className="skeleton sk-brand" />
         </div>
-      )}
+        <div className="sk-nav">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div className="skeleton sk-navrow" key={i} />
+          ))}
+        </div>
+        <div className="sk-games">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div className="skeleton sk-gamerow" key={i} />
+          ))}
+        </div>
+      </aside>
+      <main className="stage">
+        <div className="sk-head">
+          <div className="skeleton sk-title" />
+          <div className="skeleton sk-sub" />
+        </div>
+        <div className="sk-wall">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div className="skeleton sk-card" key={i} />
+          ))}
+        </div>
+      </main>
     </div>
   );
 }

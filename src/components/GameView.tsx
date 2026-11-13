@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "@/stores/app";
+import { useUi } from "@/stores/ui";
 import { toast } from "@/stores/toasts";
 import { t } from "@/i18n/zh-CN";
-import { PLATFORM_SOURCE, achPercent } from "@/lib/format";
-import { IconPlay, IconStarFilled, IconStar, IconStop } from "@/components/Icons";
+import { achPercent, fmtClock, fmtHours, relDay } from "@/lib/format";
+import { IconChevronDown, IconDots, IconPlay, IconStarFilled, IconStar, IconStop } from "@/components/Icons";
 import { api } from "@/lib/api";
 import { bannerUrl } from "@/components/art";
 import { OverviewPane } from "@/components/panes/OverviewPane";
@@ -11,6 +12,8 @@ import { AchievementsPane } from "@/components/panes/AchievementsPane";
 import { ModsPane } from "@/components/panes/ModsPane";
 import { OptionsPane } from "@/components/panes/OptionsPane";
 import type { GameTab } from "@/stores/app";
+import { useClock, sessionSeconds } from "@/stores/clock";
+import { ContextMenu } from "@/components/ContextMenu";
 
 const TABS: Array<{ key: GameTab; label: string }> = [
   { key: "overview", label: t("game.tabs.overview") },
@@ -25,37 +28,64 @@ export function GameView({ gameId }: { gameId: string }) {
   const tab = useApp((s) => s.tab);
   const setTab = useApp((s) => s.setTab);
   const select = useApp((s) => s.select);
+  const setView = useApp((s) => s.setView);
   const launch = useApp((s) => s.launch);
   const stopGame = useApp((s) => s.stop);
   const toggleFavorite = useApp((s) => s.toggleFavorite);
   const reload = useApp((s) => s.reload);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const now = useClock((s) => s.now);
+  const paneRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const [tabInd, setTabInd] = useState<{ left: number; width: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [playMenu, setPlayMenu] = useState<{ x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [justFailed, setJustFailed] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
 
   const game = useMemo(() => games.find((g) => g.id === gameId), [games, gameId]);
 
   useEffect(() => {
     setConfirmDelete(false);
-    setMenuOpen(false);
+    setConfirmStop(false);
+    setMenu(null);
+    setPlayMenu(null);
+    setJustFailed(false);
+    setScrolled(false);
+    paneRef.current?.scrollTo({ top: 0 });
   }, [gameId]);
 
   useEffect(() => {
-    const onDoc = () => setMenuOpen(false);
-    if (menuOpen) {
-      document.addEventListener("click", onDoc);
-      return () => document.removeEventListener("click", onDoc);
-    }
-  }, [menuOpen]);
+    if (!justFailed) return;
+    const id = window.setTimeout(() => setJustFailed(false), 3 * 60 * 1000);
+    return () => window.clearTimeout(id);
+  }, [justFailed]);
+
+  // 页签下划线随当前页签滑动（160ms），窗口变宽时重新量
+  useLayoutEffect(() => {
+    const wrap = tabsRef.current;
+    if (!wrap) return;
+    const measure = () => {
+      const on = wrap.querySelector<HTMLElement>(".tab.is-on");
+      if (on) setTabInd({ left: on.offsetLeft, width: on.offsetWidth });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [tab, gameId, games]);
 
   if (!game) return null;
 
   const running = game.running || !!sessions[game.id];
-  const sessionSec = sessions[game.id]
-    ? Math.max(0, Math.floor((Date.now() - new Date(sessions[game.id].startedAt).getTime()) / 1000))
-    : 0;
+  const elapsed = running ? sessionSeconds(sessions[game.id]?.startedAt, now) : 0;
   const banner = bannerUrl(game);
   const pct = achPercent(game);
+  const broken = !game.exePath && !game.workDir;
+  const primary = game.titleEn || game.title;
+  const secondary = game.titleEn ? game.title : null;
 
   const onPlay = async () => {
     if (busy) return;
@@ -63,6 +93,7 @@ export function GameView({ gameId }: { gameId: string }) {
     const res = await launch(game.id);
     setBusy(false);
     if (!res.ok) {
+      setJustFailed(true);
       toast.warn(`《${game.title}》无法启动`, res.error, "启动失败");
       return;
     }
@@ -80,6 +111,7 @@ export function GameView({ gameId }: { gameId: string }) {
   const onStop = async () => {
     try {
       await stopGame(game.id);
+      setConfirmStop(false);
       toast.info(`《${game.title}》`, "已结束进程", "已退出");
     } catch (e) {
       toast.warn("结束进程失败", String(e), "未退出");
@@ -98,14 +130,26 @@ export function GameView({ gameId }: { gameId: string }) {
     toast.info(t("toast.coverReset"), game.title);
   };
 
+  const relocate = async () => {
+    const path = await api.pickExe();
+    if (!path) return;
+    const dir = path.replace(/[\\/][^\\/]+$/, "");
+    await useApp.getState().updatePaths(game.id, path, dir, game.args ?? "");
+    await reload();
+    toast.info("已重新定位", path);
+  };
+
   const hasCustomCover = !!game.coverPath && !/^https?:/.test(game.coverPath);
 
   return (
-    <div className="view-in" style={{ display: "flex", flexDirection: "column", flex: "1 1 auto", minHeight: 0 }}>
-      <section className="hero3">
+    <div className="view-in game-view">
+      <section className={`hero3${banner ? " has-art" : ""}`}>
         <div className="hero3-art" style={{ ["--a" as string]: game.tintA }}>
-          {banner && <div className="art-img" style={{ backgroundImage: `url("${banner}")` }} />}
-          <div className="fill" style={banner ? { opacity: 0.35 } : undefined} />
+          {banner ? (
+            <div className="art-img" style={{ backgroundImage: `url("${banner}")` }} />
+          ) : (
+            <div className="fill" />
+          )}
           <div className="tint" />
           <div className="veil" />
           <div className="scrim" />
@@ -119,101 +163,30 @@ export function GameView({ gameId }: { gameId: string }) {
             {t("game.back")}
           </button>
           <div className="crumb">
-            所有游戏 /
-            <b>{game.title}</b>
+            <span>所有游戏</span>
+            <i>/</i>
+            <b>{primary}</b>
           </div>
           <div className="spacer" />
-          <div style={{ position: "relative" }}>
-            <button className="icon-btn" title="更多" onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-                <path d="M3 8h.01M8 8h.01M13 8h.01" strokeLinecap="round" />
-              </svg>
-            </button>
-            {menuOpen && (
-              <div
-                className="menu-pop"
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  position: "absolute",
-                  right: 0,
-                  top: 34,
-                  width: 190,
-                  padding: 5,
-                  background: "#121b26",
-                  border: "1px solid var(--line)",
-                  borderRadius: 8,
-                  boxShadow: "0 18px 44px rgba(0,0,0,.6)",
-                  zIndex: 40,
-                }}
-              >
-                <button
-                  className="menu-item"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    if (game.workDir) void api.revealInExplorer(game.exePath ?? game.workDir);
-                  }}
-                >
-                  {t("game.openFolder")}
-                </button>
-                <button
-                  className="menu-item"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    void changeCover();
-                  }}
-                >
-                  {t("game.changeCover")}
-                </button>
-                {hasCustomCover && (
-                  <button
-                    className="menu-item"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      void resetCover();
-                    }}
-                  >
-                    {t("game.resetCover")}
-                  </button>
-                )}
-                <button
-                  className="menu-item"
-                  onClick={async () => {
-                    setMenuOpen(false);
-                    await api.setHidden(game.id, !game.hidden);
-                    await reload();
-                    toast.info(game.hidden ? t("game.showHidden") : t("game.hidden"), game.title);
-                    if (!game.hidden) select(null);
-                  }}
-                >
-                  {game.hidden ? t("game.showHidden") : t("game.hidden")}
-                </button>
-                <div style={{ height: 1, background: "var(--line-soft)", margin: "4px 6px" }} />
-                <button
-                  className="menu-item is-danger"
-                  onClick={async () => {
-                    if (!confirmDelete) {
-                      setConfirmDelete(true);
-                      return;
-                    }
-                    setMenuOpen(false);
-                    await api.deleteGame(game.id);
-                    select(null);
-                    await reload();
-                    toast.info(t("toast.removed"), game.title);
-                  }}
-                >
-                  {confirmDelete ? t("game.deleteConfirm") : t("game.deleteGame")}
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            className="icon-btn"
+            title={t("rail.more")}
+            aria-label={t("rail.more")}
+            aria-haspopup="menu"
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setMenu({ x: r.right - 200, y: r.bottom + 6 });
+            }}
+          >
+            <IconDots size={15} />
+          </button>
         </div>
 
         <div className="hero3-body">
           <h1 className="hero3-title">
-            <span>{game.title}</span>
-            {game.titleEn && <small>{game.titleEn}</small>}
+            <span>{primary}</span>
           </h1>
+          {secondary && <div className="hero3-sub">{secondary}</div>}
           <div className="hero3-meta">
             {game.studio && <span>{game.studio}</span>}
             {game.releaseDate && (
@@ -222,46 +195,84 @@ export function GameView({ gameId }: { gameId: string }) {
                 <span>{game.releaseDate}</span>
               </>
             )}
+            <span className="sep" />
+            <span className="src-txt">{game.platform === "steam" ? "Steam" : game.platform === "epic" ? "Epic" : "本地添加"}</span>
             {game.tags.map((tg) => (
-              <span className="tagpill" key={tg.id}>
+              <button
+                className="tag-chip"
+                key={tg.id}
+                style={{ color: tg.color, background: `${tg.color}1f`, borderColor: `${tg.color}55` }}
+                onClick={() => {
+                  select(null);
+                  setView(`tag:${tg.id}`);
+                }}
+              >
                 {tg.name}
-              </span>
-            ))}
-            {(game.studio || game.releaseDate || game.tags.length > 0) && <span className="sep" />}
-            <span className="mono">{running ? `本次 ${Math.floor(sessionSec / 60)} 分钟` : PLATFORM_SOURCE[game.platform]}</span>
-          </div>
-          <div className="hero3-actions">
-            <button className="btn-play big" onClick={onPlay} disabled={busy}>
-              <IconPlay size={15} />
-              {running ? t("game.running") : t("game.play")}
-              <span className="chev">
-                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M4 6.4L8 10.2l4-3.8" />
-                </svg>
-              </span>
-            </button>
-            {running && (
-              <button className="btn-still" title={t("game.stop")} onClick={onStop}>
-                <IconStop size={13} />
               </button>
-            )}
-            <button className="btn-ghost" onClick={() => setTab("ach")}>
-              <IconStar size={14} />
-              {t("game.achievements", { a: game.achUnlocked, b: game.achTotal })}
-            </button>
+            ))}
+          </div>
+
+          <div className="hero3-actions">
+            <div className={`play-split${running ? " is-running" : ""}`}>
+              <button
+                className={`play-main${broken ? " is-broken" : ""}`}
+                onClick={() => void (broken ? relocate() : onPlay())}
+                disabled={busy}
+              >
+                {busy ? <span className="spin" /> : broken ? <IconStop size={14} /> : <IconPlay size={15} />}
+                {busy
+                  ? "正在启动…"
+                  : broken
+                    ? "找不到程序 · 重新定位"
+                    : running
+                      ? t("game.running")
+                      : t("game.play")}
+                {running && !busy && <span className="run-time">{fmtClock(elapsed)}</span>}
+              </button>
+              {!broken && (
+                <button
+                  className="play-chev"
+                  aria-label="启动选项"
+                  aria-haspopup="menu"
+                  onClick={(e) => {
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    setPlayMenu({ x: r.right - 200, y: r.bottom + 6 });
+                  }}
+                >
+                  <IconChevronDown size={11} />
+                </button>
+              )}
+            </div>
+
             <button
-              className={`btn-ghost${game.favorite ? " is-on" : ""}`}
+              className={`fav-btn${game.favorite ? " is-on" : ""}`}
+              title={game.favorite ? t("game.favorited") : t("game.favorite")}
+              aria-label={game.favorite ? t("game.favorited") : t("game.favorite")}
               onClick={() => void toggleFavorite(game.id)}
             >
-              {game.favorite ? <IconStarFilled size={14} /> : <IconStar size={14} />}
-              {game.favorite ? t("game.favorited") : t("game.favorite")}
+              {game.favorite ? <IconStarFilled size={15} /> : <IconStar size={15} />}
             </button>
+
+            <div className="hero3-stats">
+              <span>
+                已玩 <b>{fmtHours(game.playtimeSec)}</b>
+              </span>
+              <span className="sep" />
+              <span>上次 {relDay(game.lastPlayedAt)}</span>
+            </div>
           </div>
+
+          {justFailed && (
+            <div className="launch-fail">
+              启动失败，可能是路径失效或程序被移动。点「找不到程序 · 重新定位」可以指到新的 exe。
+            </div>
+          )}
         </div>
       </section>
 
-      <section className="under">
-        <div className="tabs" role="tablist">
+      <section className={`under${scrolled ? " is-scrolled" : ""}`}>
+        <div className="tabs" role="tablist" ref={tabsRef}>
+          {tabInd && <span className="tab-ind" style={{ transform: `translateX(${tabInd.left}px)`, width: tabInd.width }} />}
           {TABS.map((x) => (
             <button
               key={x.key}
@@ -271,25 +282,139 @@ export function GameView({ gameId }: { gameId: string }) {
               aria-selected={tab === x.key}
             >
               {x.label}
-              {x.key === "ach" && <span className="n">{game.achTotal}</span>}
-              {x.key === "mod" && <span className="n">{game.modCount}</span>}
+              {x.key === "ach" && game.achTotal > 0 && <span className="n">{game.achTotal}</span>}
+              {x.key === "mod" && game.modCount > 0 && <span className="n">{game.modCount}</span>}
             </button>
           ))}
           <div className="spacer" />
-          {game.achTotal > 0 && (
-            <span className="mono" style={{ fontSize: 10.5, color: "var(--text-3)", paddingBottom: 2 }}>
-              成就 {game.achUnlocked}/{game.achTotal} · {pct}%
-            </span>
-          )}
+          <span className={`tab-ach${pct === 100 ? " is-full" : ""}`}>
+            成就 {game.achUnlocked}/{game.achTotal}
+          </span>
         </div>
 
-        <div className="pane-scroll" id="pane-scroll">
-          {tab === "overview" && <OverviewPane game={game} />}
-          {tab === "ach" && <AchievementsPane game={game} />}
-          {tab === "mod" && <ModsPane game={game} />}
-          {tab === "opts" && <OptionsPane game={game} />}
+        <div
+          className="pane-scroll"
+          id="pane-scroll"
+          ref={paneRef}
+          onScroll={(e) => setScrolled((e.currentTarget as HTMLElement).scrollTop > 24)}
+        >
+          {tab === "overview" && (
+            <div className="pane-fade" key="overview">
+              <OverviewPane game={game} />
+            </div>
+          )}
+          {tab === "ach" && (
+            <div className="pane-fade" key="ach">
+              <AchievementsPane game={game} />
+            </div>
+          )}
+          {tab === "mod" && (
+            <div className="pane-fade" key="mod">
+              <ModsPane game={game} />
+            </div>
+          )}
+          {tab === "opts" && (
+            <div className="pane-fade" key="opts">
+              <OptionsPane game={game} />
+            </div>
+          )}
         </div>
       </section>
+
+      {playMenu && (
+        <ContextMenu
+          x={playMenu.x}
+          y={playMenu.y}
+          width={200}
+          onClose={() => setPlayMenu(null)}
+          items={[
+            {
+              label: t("game.openFolder"),
+              disabled: !game.workDir && !game.exePath,
+              onSelect: () => void api.revealInExplorer(game.exePath ?? game.workDir!),
+            },
+            {
+              label: "带参数启动",
+              disabled: !game.args,
+              hint: game.args ?? "未设置",
+              onSelect: () => void onPlay(),
+            },
+            ...(running
+              ? [
+                  { separator: true },
+                  {
+                    label: confirmStop ? "再点一次结束游戏" : t("game.stop"),
+                    danger: true,
+                    onSelect: () => {
+                      if (!confirmStop) {
+                        setConfirmStop(true);
+                        return false;
+                      }
+                      void onStop();
+                    },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          width={200}
+          onClose={() => {
+            setMenu(null);
+            setConfirmDelete(false);
+          }}
+          title={game.title}
+          items={[
+            {
+              label: game.appid ? t("match.rematch") : t("match.entry"),
+              onSelect: () => useUi.getState().openMatch(game.id),
+            },
+            { label: t("game.changeCover"), onSelect: () => void changeCover() },
+            ...(hasCustomCover
+              ? [{ label: t("game.resetCover"), onSelect: () => void resetCover() }]
+              : []),
+            { separator: true },
+            {
+              label: t("game.openFolder"),
+              disabled: !game.exePath && !game.workDir,
+              onSelect: () => void api.revealInExplorer(game.exePath ?? game.workDir!),
+            },
+            {
+              label: game.hidden ? t("game.showHidden") : t("game.hidden"),
+              onSelect: () => {
+                void (async () => {
+                  await api.setHidden(game.id, !game.hidden);
+                  await reload();
+                  toast.info(game.hidden ? t("game.showHidden") : t("game.hidden"), game.title);
+                  if (!game.hidden) select(null);
+                })();
+              },
+            },
+            { separator: true },
+            {
+              label: confirmDelete ? t("game.deleteConfirm") : t("game.deleteGame"),
+              danger: true,
+              onSelect: () => {
+                if (!confirmDelete) {
+                  setConfirmDelete(true);
+                  return false;
+                }
+                void (async () => {
+                  await api.deleteGame(game.id);
+                  select(null);
+                  await reload();
+                  toast.info(t("toast.removed"), game.title);
+                })();
+              },
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }

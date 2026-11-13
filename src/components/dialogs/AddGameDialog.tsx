@@ -7,7 +7,7 @@ import { useApp } from "@/stores/app";
 import { useUi } from "@/stores/ui";
 import { toast } from "@/stores/toasts";
 import { fmtBytes } from "@/lib/format";
-import { IconCheck, IconFolder, IconGamepad, IconScan, IconStar } from "@/components/Icons";
+import { IconCheck, IconDownload, IconFolder, IconGamepad, IconScan } from "@/components/Icons";
 
 type View = "menu" | "folder";
 
@@ -120,43 +120,11 @@ export function AddGameDialog() {
     onClick: () => void,
     primary = false,
   ) => (
-    <button
-      key={key}
-      onClick={onClick}
-      disabled={adding}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        width: "100%",
-        textAlign: "left",
-        padding: "13px 14px",
-        borderRadius: 9,
-        border: `1px solid ${primary ? "rgba(102,192,244,.34)" : "var(--line-soft)"}`,
-        background: primary ? "rgba(102,192,244,.08)" : "rgba(22,32,45,.5)",
-        marginBottom: 8,
-        cursor: adding ? "default" : "pointer",
-      }}
-    >
-      <span
-        style={{
-          width: 32,
-          height: 32,
-          flex: "0 0 32px",
-          borderRadius: 7,
-          display: "grid",
-          placeItems: "center",
-          background: primary ? "rgba(102,192,244,.16)" : "rgba(255,255,255,.04)",
-          color: primary ? "var(--hi)" : "var(--text-2)",
-        }}
-      >
-        {icon}
-      </span>
-      <span style={{ minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text)" }}>{title}</span>
-        <span style={{ display: "block", fontSize: 10.5, color: "var(--text-3)", marginTop: 3, lineHeight: 1.6 }}>
-          {hint}
-        </span>
+    <button key={key} className={`add-opt${primary ? " is-primary" : ""}`} onClick={onClick} disabled={adding}>
+      <span className="add-ico">{icon}</span>
+      <span className="add-tx">
+        <b>{title}</b>
+        <span>{hint}</span>
       </span>
     </button>
   );
@@ -171,6 +139,9 @@ export function AddGameDialog() {
           {t("add.scanAgain")}
         </button>
         <div className="spacer" />
+        <span className="form-hint" style={{ marginTop: 0 }}>
+          {scanning ? "扫描中…" : `已选 ${selectedCount} 项`}
+        </span>
         <button
           className="btn-primary"
           onClick={() => void addSelected()}
@@ -201,33 +172,20 @@ export function AddGameDialog() {
     >
       {view === "menu" ? (
         <>
-          {option("exe", <IconGamepad size={16} />, t("add.fromExe"), t("add.fromExeHint"), () => void pickExe(), true)}
-          {option("folder", <IconFolder size={16} />, t("add.fromFolder"), t("add.fromFolderHint"), () => void pickFolder())}
-          {option("scan", <IconScan size={16} />, t("add.scan"), t("add.scanHint"), () => {
+          {option("exe", <IconGamepad size={18} />, t("add.fromExe"), t("add.fromExeHint"), () => void pickExe(), true)}
+          {option("folder", <IconFolder size={18} />, t("add.fromFolder"), t("add.fromFolderHint"), () => void pickFolder())}
+          {option("scan", <IconScan size={18} />, t("add.scan"), t("add.scanHint"), () => {
             close();
             open("scan");
           })}
 
-          <div
-            style={{
-              marginTop: 14,
-              padding: "10px 12px",
-              border: "1px dashed var(--line)",
-              borderRadius: 8,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 10.5,
-              color: "var(--text-3)",
-              lineHeight: 1.7,
-            }}
-          >
-            <IconStar size={12} />
+          <div className="drag-hint">
+            <IconDownload size={14} />
             也可以直接把 exe / 快捷方式 / 整个游戏文件夹拖进窗口——文件夹会先扫描再让你勾选。
           </div>
         </>
       ) : scanning ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="skel-list">
           {[0, 1, 2].map((i) => (
             <div key={i} className="skeleton" style={{ height: 46, opacity: 1 - i * 0.16 }} />
           ))}

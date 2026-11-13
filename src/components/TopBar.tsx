@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/stores/app";
 import { useUi } from "@/stores/ui";
 import { toast } from "@/stores/toasts";
 import { t } from "@/i18n/zh-CN";
-import { IconGrid, IconList, IconPlus, IconRefresh, IconSearch } from "@/components/Icons";
+import { IconDots, IconGrid, IconList, IconPlus, IconSearch } from "@/components/Icons";
+import { ContextMenu } from "@/components/ContextMenu";
 
 export function TopBar() {
   const query = useApp((s) => s.query);
@@ -13,8 +14,11 @@ export function TopBar() {
   const refreshing = useApp((s) => s.refreshing);
   const progress = useApp((s) => s.refreshProgress);
   const refreshAllSteam = useApp((s) => s.refreshAllSteam);
+  const syncAllAchievements = useApp((s) => s.syncAllAchievements);
   const open = useUi((s) => s.open);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const onRefresh = async () => {
     const res = await refreshAllSteam();
@@ -27,6 +31,18 @@ export function TopBar() {
       res.fail ? `${res.fail} 个失败（网络或限流）` : "简介 / 封面 / 中文名已更新",
       "Steam",
     );
+  };
+
+  const onSyncAll = async () => {
+    setSyncing(true);
+    try {
+      const res = await syncAllAchievements("auto");
+      toast.info(res.message ?? `已同步 ${res.synced} 个游戏`, res.failed ? `${res.failed} 个失败` : "Steam / 本地文件", "成就");
+    } catch (e) {
+      toast.warn("同步全部成就失败", String(e), "成就");
+    } finally {
+      setSyncing(false);
+    }
   };
 
   useEffect(() => {
@@ -45,6 +61,8 @@ export function TopBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setQuery]);
 
+  const pct = progress?.total ? Math.round((progress.done / progress.total) * 100) : 0;
+
   return (
     <header className="topbar">
       <div className="search">
@@ -58,7 +76,11 @@ export function TopBar() {
           autoComplete="off"
           aria-label={t("top.searchPlaceholder")}
         />
-        {query ? (
+        {refreshing ? (
+          <span className="search-status">
+            {t("top.refreshing", { done: progress?.done ?? 0, total: progress?.total ?? 0 })}
+          </span>
+        ) : query ? (
           <button className="kbd" onClick={() => setQuery("")} title="清除搜索">
             Esc
           </button>
@@ -72,6 +94,7 @@ export function TopBar() {
           className={`seg-item${viewMode === "grid" ? " is-on" : ""}`}
           onClick={() => setViewMode("grid")}
           title={t("top.grid")}
+          aria-label={t("top.grid")}
           aria-pressed={viewMode === "grid"}
         >
           <IconGrid />
@@ -80,26 +103,57 @@ export function TopBar() {
           className={`seg-item${viewMode === "list" ? " is-on" : ""}`}
           onClick={() => setViewMode("list")}
           title={t("top.list")}
+          aria-label={t("top.list")}
           aria-pressed={viewMode === "list"}
         >
           <IconList />
         </button>
       </div>
       <button
-        className="btn-refresh"
-        onClick={() => void onRefresh()}
-        disabled={refreshing}
-        title={refreshing ? t("top.refreshing", { done: progress?.done ?? 0, total: progress?.total ?? 0 }) : t("top.refresh")}
+        className="btn-ghost icon-only"
+        title={t("top.more")}
+        aria-label={t("top.more")}
+        aria-haspopup="menu"
+        onClick={(e) => {
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          setMenu({ x: r.right - 208, y: r.bottom + 6 });
+        }}
       >
-        <IconRefresh size={13} className={refreshing ? "spin" : undefined} />
-        {refreshing
-          ? t("top.refreshing", { done: progress?.done ?? 0, total: progress?.total ?? 0 })
-          : "刷新资料"}
+        <IconDots size={15} />
       </button>
       <button className="btn-add" onClick={() => open("add")}>
         <IconPlus size={13} />
         {t("top.add")}
       </button>
+
+      {refreshing && (
+        <div className="topbar-progress" role="progressbar" aria-valuenow={pct}>
+          <i style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: refreshing ? t("top.refreshing", { done: progress?.done ?? 0, total: progress?.total ?? 0 }) : "刷新全部资料",
+              disabled: refreshing,
+              onSelect: () => void onRefresh(),
+            },
+            {
+              label: syncing ? "同步成就中…" : "同步全部成就",
+              disabled: syncing,
+              onSelect: () => void onSyncAll(),
+            },
+            { separator: true },
+            { label: "扫描 Steam / Epic 库", onSelect: () => open("scan") },
+            { label: t("rail.settings"), onSelect: () => open("settings") },
+          ]}
+        />
+      )}
     </header>
   );
 }

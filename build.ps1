@@ -1,4 +1,4 @@
-# 星匣 StarBox · 构建脚本
+﻿# 星匣 StarBox · 构建脚本
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File .\build.ps1
 #   powershell -ExecutionPolicy Bypass -File .\build.ps1 -MingwDir "C:\mingw64\bin" -TargetDir "C:\starbox-build"

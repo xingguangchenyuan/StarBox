@@ -148,7 +148,7 @@ export function ScanDialog() {
                 borderRadius: 8,
                 padding: "9px 11px",
                 marginBottom: 12,
-                fontSize: 10.5,
+                fontSize: "var(--fs-micro)",
                 color: "var(--text-2)",
                 lineHeight: 1.8,
               }}

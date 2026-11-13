@@ -48,12 +48,16 @@ export function useHashRoute() {
 
   useEffect(() => {
     const onHash = () => {
-      const { id, tab: t } = parse(window.location.hash);
+      const { id, tab: t, dialog, view } = parse(window.location.hash);
+      if (view) useApp.getState().setViewMode(view);
       if (id && useApp.getState().games.some((g) => g.id === id)) {
         useApp.getState().select(id, t);
       } else if (!id) {
         useApp.getState().select(null);
       }
+      // 只改 hash 时（同页跳转）深链参数也要生效
+      if (dialog) useUi.getState().open(dialog);
+      else if (useUi.getState().dialog) useUi.getState().close();
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);

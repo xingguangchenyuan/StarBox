@@ -73,6 +73,19 @@ export function MatchSteamDialog({ game }: { game: Game }) {
     }
   };
 
+  const scoreText = (score: number | null) => {
+    if (score === null) return null;
+    if (score >= 95) return { label: "几乎一致", cls: "is-high" };
+    if (score >= 88) return { label: "很可能", cls: "is-good" };
+    if (score >= 70) return { label: "可能", cls: "is-mid" };
+    return { label: "相似度较低", cls: "is-low" };
+  };
+
+  // 当前已绑定的条目置顶，避免误改
+  const ordered = items
+    .slice()
+    .sort((a, b) => (a.appid === game.appid ? -1 : 0) - (b.appid === game.appid ? -1 : 0));
+
   return (
     <Dialog
       title={t("match.title")}
@@ -117,34 +130,38 @@ export function MatchSteamDialog({ game }: { game: Game }) {
       )}
 
       <div className="match-list">
-        {items.map((it) => (
-          <button
-            className="match-row"
-            key={it.appid}
-            disabled={binding !== null}
-            onClick={() => void bind(it)}
-          >
-            <span className="mi">
-              {it.tinyImage ? <img src={it.tinyImage} alt="" loading="lazy" /> : <IconSteam size={16} />}
-            </span>
-            <span className="mt">
-              <span className="nm">
-                {it.name}
-                {it.score !== null && it.score >= 95 && (
-                  <span className="tag" style={{ marginLeft: 6, padding: "0 5px", height: 15, lineHeight: "15px" }}>
-                    {t("match.likely")}
-                  </span>
-                )}
+        {ordered.map((it) => {
+          const st = scoreText(it.score);
+          const current = it.appid === game.appid;
+          return (
+            <button
+              className={`match-row${current ? " is-current" : ""}`}
+              key={it.appid}
+              disabled={binding !== null}
+              onClick={() => void bind(it)}
+            >
+              <span className="mi">
+                {it.tinyImage ? <img src={it.tinyImage} alt="" loading="lazy" /> : <IconSteam size={16} />}
               </span>
-              <span className="id">
-                {it.nameEn && it.nameEn !== it.name ? `${it.nameEn} · ` : ""}AppID {it.appid}
-                {it.price ? ` · ${it.price}` : ""}
-                {it.score !== null ? ` · ${t("match.similar", { n: it.score })}` : ""}
+              <span className="mt">
+                <span className="nm">
+                  {it.name}
+                  {current && <span className="tag is-current">当前</span>}
+                </span>
+                <span className="id">
+                  {it.nameEn && it.nameEn !== it.name ? `${it.nameEn} · ` : ""}AppID {it.appid}
+                  {it.price ? ` · ${it.price}` : ""}
+                </span>
               </span>
-            </span>
-            <span className="go">{binding === it.appid ? t("match.binding") : t("match.bind")}</span>
-          </button>
-        ))}
+              {st && (
+                <span className={`match-score ${st.cls}`} title={t("match.similar", { n: it.score ?? 0 })}>
+                  {st.label}
+                </span>
+              )}
+              <span className="go">{binding === it.appid ? t("match.binding") : current ? "重新匹配" : t("match.bind")}</span>
+            </button>
+          );
+        })}
       </div>
     </Dialog>
   );

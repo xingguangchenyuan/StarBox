@@ -23,6 +23,14 @@ export function fmtDuration(sec: number): string {
   return `${s} 秒`;
 }
 
+/** 00:23:15 —— 运行中的本次时长 */
+export function fmtClock(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${pad(h)}:${pad(m)}:${pad(s % 60)}`;
+}
+
 export function fmtBytes(bytes: number): string {
   if (!bytes) return "—";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -102,10 +110,10 @@ export const PLATFORM_SOURCE: Record<Platform, string> = {
 };
 
 export const SORT_LABEL: Record<SortKey, string> = {
-  recent: "最近游玩 ↓",
-  hours: "时长 ↓",
+  recent: "最近游玩",
+  hours: "时长",
   name: "名称 A–Z",
-  added: "添加时间 ↓",
+  added: "添加时间",
 };
 
 export const SORT_ORDER: SortKey[] = ["recent", "hours", "name", "added"];

@@ -3,9 +3,10 @@ import type { Game, ViewKey } from "@/types";
 import { useApp } from "@/stores/app";
 import { useUi } from "@/stores/ui";
 import { toast } from "@/stores/toasts";
+import { useClock, sessionSeconds } from "@/stores/clock";
 import { t } from "@/i18n/zh-CN";
-import { isRecent, fmtHoursShort } from "@/lib/format";
-import { IconClock, IconGrid, IconPlay, IconPlus, IconSettings, IconStarFilled, IconStar } from "@/components/Icons";
+import { isRecent, fmtHoursShort, fmtClock } from "@/lib/format";
+import { IconClock, IconGrid, IconPlay, IconSettings, IconStarFilled, IconStar } from "@/components/Icons";
 import { ThumbArt } from "@/components/art";
 import { matchQuery } from "@/lib/search";
 import { api } from "@/lib/api";
@@ -25,6 +26,7 @@ export function Rail() {
   const toggleFavorite = useApp((s) => s.toggleFavorite);
   const removeGame = useApp((s) => s.removeGame);
   const open = useUi((s) => s.open);
+  const now = useClock((s) => s.now);
   const [menu, setMenu] = useState<{ x: number; y: number; game: Game } | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
 
@@ -46,10 +48,12 @@ export function Rail() {
 
   const navItem = (key: ViewKey, icon: React.ReactNode, label: string, n: number, hot = false) => {
     const on = view === key && !selectedId;
+    // 「正在运行 0」不该比有内容时更显眼：空计数整行降到最弱一级
+    const idle = hot && n === 0;
     return (
       <button
         key={key}
-        className={`f-item${on ? " is-on" : ""}${hot ? " is-hot" : ""}`}
+        className={`f-item${on ? " is-on" : ""}${hot ? " is-hot" : ""}${idle ? " is-idle" : ""}`}
         onClick={() => {
           setQuery("");
           setView(key);
@@ -58,7 +62,7 @@ export function Rail() {
       >
         {icon}
         <span className="lbl">{label}</span>
-        <span className={`n${n === 0 ? " is-zero" : ""}`}>{n}</span>
+        {n > 0 && <span className="n">{n}</span>}
       </button>
     );
   };
@@ -128,10 +132,17 @@ export function Rail() {
           const on = selectedId === g.id;
           const running = g.running || !!sessions[g.id];
           const menuOn = menu?.game.id === g.id;
+          // titleEn 存的是商店中文名，title 是原名 —— 侧栏优先显示中文名，原名退到第二行
+          const primary = g.titleEn || g.title;
+          const secondary = g.titleEn ? g.title : null;
+          const elapsed = running
+            ? fmtClock(sessionSeconds(sessions[g.id]?.startedAt, now) + (sessions[g.id] ? 0 : g.sessionSec))
+            : null;
           return (
             <div
               key={g.id}
               className={`g${on ? " is-on" : ""}${g.hidden ? " is-hidden" : ""}${menuOn ? " is-menu" : ""}`}
+              data-rail-game={g.id}
               onClick={() => select(g.id)}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -142,6 +153,11 @@ export function Rail() {
               aria-selected={on}
               tabIndex={0}
               onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  void useApp.getState().launch(g.id);
+                  return;
+                }
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   select(g.id);
@@ -151,45 +167,45 @@ export function Rail() {
             >
               <ThumbArt game={g} className="gt" />
               <span className="gx">
-                <span className="gn">
-                  <span className="orig">{g.title}</span>
-                  {g.titleEn && <span className="zh">{g.titleEn}</span>}
+                <span className="gn">{primary}</span>
+                <span className="gs">
+                  {secondary && <span className="alt">{secondary}</span>}
+                  <span className={`tm${running ? " is-run" : ""}`}>
+                    {running ? `${t("rail.runningNow")} · ${elapsed}` : fmtHoursShort(g.playtimeSec)}
+                  </span>
                 </span>
-                <span className="gs">{fmtHoursShort(g.playtimeSec)}</span>
               </span>
-              {running ? (
-                <span className="run" title="运行中" />
-              ) : g.favorite ? (
-                <IconStarFilled className="fav" size={10} />
-              ) : null}
-              <button
-                className="g-more"
-                title={t("rail.more")}
-                aria-label={`${g.title} ${t("rail.more")}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  setConfirmRemove(false);
-                  setMenu({ x: r.right - 8, y: r.bottom + 4, game: g });
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-                  <circle cx="3.2" cy="8" r="1.3" />
-                  <circle cx="8" cy="8" r="1.3" />
-                  <circle cx="12.8" cy="8" r="1.3" />
-                </svg>
-              </button>
+              <span className="g-tail">
+                {running ? (
+                  <span className="run" title={t("rail.runningNow")} />
+                ) : g.favorite ? (
+                  <IconStarFilled className="fav" size={10} />
+                ) : null}
+                <button
+                  className="g-more"
+                  title={t("rail.more")}
+                  aria-label={`${g.title} ${t("rail.more")}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    setConfirmRemove(false);
+                    setMenu({ x: r.right - 8, y: r.bottom + 4, game: g });
+                  }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+                    <circle cx="3.2" cy="8" r="1.3" />
+                    <circle cx="8" cy="8" r="1.3" />
+                    <circle cx="12.8" cy="8" r="1.3" />
+                  </svg>
+                </button>
+              </span>
             </div>
           );
         })}
       </div>
 
       <div className="rail-foot">
-        <button className="foot-btn" onClick={() => open("add")}>
-          <IconPlus className="ico" />
-          {t("rail.addGame")}
-        </button>
-        <button className="foot-btn push" onClick={() => open("settings")}>
+        <button className="foot-btn" onClick={() => open("settings")}>
           <IconSettings className="ico" />
           {t("rail.settings")}
         </button>

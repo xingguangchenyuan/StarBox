@@ -102,8 +102,21 @@ export const IconCheck = ({ size = 11, ...p }: P) => (
   </svg>
 );
 
-export const IconStop = ({ size = 13, ...p }: P) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden {...p}>
+export const IconCopy = ({ size = 13, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.4" />
+    <path d="M10.6 5.4V3.8c0-.8-.6-1.4-1.4-1.4H3.8c-.8 0-1.4.6-1.4 1.4v5.4c0 .8.6 1.4 1.4 1.4h1.6" />
+  </svg>
+);
+
+export const IconLock = ({ size = 13, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <rect x="3.2" y="7" width="9.6" height="6.6" rx="1.4" />
+    <path d="M5.4 7V5.2a2.6 2.6 0 015.2 0V7" />
+  </svg>
+);
+
+export const IconStop = ({ size = 13, ...p }: P) => (  <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden {...p}>
     <rect x="3.6" y="3.6" width="8.8" height="8.8" rx="1.4" />
   </svg>
 );
