@@ -15,6 +15,10 @@ import type {
 } from "@/types";
 import { api, isDemo } from "@/lib/api";
 import { SORT_ORDER } from "@/lib/format";
+import { toast } from "@/stores/toasts";
+
+/** 每个游戏一条标签写入队列，避免连点两个标签时后一次覆盖前一次 */
+const tagQueue = new Map<string, Promise<unknown>>();
 
 export type GameTab = "overview" | "ach" | "mod" | "opts";
 
@@ -42,6 +46,10 @@ interface AppState {
   achievements: Record<string, Achievement[]>;
   refreshing: boolean;
   refreshProgress: { done: number; total: number } | null;
+  /** 启动中的游戏：防止连点「开始游戏」拉起两个进程 */
+  launching: Record<string, boolean>;
+  /** 首屏加载失败原因（DB 损坏、命令缺失等），库视图据此提示而不是显示成空库 */
+  loadError: string | null;
 
   bootstrap: () => Promise<void>;
   reload: () => Promise<void>;
@@ -108,14 +116,23 @@ export const useApp = create<AppState>((set, get) => ({
   achievements: {},
   refreshing: false,
   refreshProgress: null,
+  launching: {},
+  loadError: null,
 
   async bootstrap() {
-    const [info, settings, games, tags] = await Promise.all([
+    const [info, settings, tags] = await Promise.all([
       api.appInfo().catch(() => null),
       api.getSettings().catch(() => null),
-      api.listGames().catch(() => [] as Game[]),
       api.listTags().catch(() => [] as Tag[]),
     ]);
+    // 库列表失败要明确告诉用户，不能伪装成「库是空的」
+    let games: Game[] = [];
+    let loadError: string | null = null;
+    try {
+      games = await api.listGames();
+    } catch (e) {
+      loadError = String(e);
+    }
     const sort = settings?.sortDefault ?? "recent";
     const sessions: Record<string, Session> = {};
     for (const g of games) {
@@ -135,6 +152,7 @@ export const useApp = create<AppState>((set, get) => ({
       sort,
       viewMode: settings?.viewMode ?? "grid",
       cardSize: settings?.cardSize ?? "standard",
+      loadError,
       ready: true,
       booting: false,
     });
@@ -221,21 +239,44 @@ export const useApp = create<AppState>((set, get) => ({
     if (!g) return;
     const favorite = !g.favorite;
     set({ games: get().games.map((x) => (x.id === id ? { ...x, favorite } : x)) });
-    await api.setFavorite(id, favorite);
+    try {
+      await api.setFavorite(id, favorite);
+    } catch (e) {
+      // 后端没写进去就别让星标停在假状态
+      set((s) => ({ games: s.games.map((x) => (x.id === id ? { ...x, favorite: !favorite } : x)) }));
+      toast.warn("收藏失败", String(e));
+    }
   },
 
   async toggleTag(gameId, tagId) {
-    const g = byId(get().games, gameId);
-    if (!g) return;
-    const has = g.tags.some((t) => t.id === tagId);
-    const tagIds = has ? g.tags.filter((t) => t.id !== tagId).map((t) => t.id) : [...g.tags.map((t) => t.id), tagId];
-    await api.setTags(gameId, tagIds);
-    await get().reload();
+    // 连点两个标签时，第二次读到的必须是第一次写完之后的清单，
+    // 否则「整表覆盖」会把前一个标签吞掉。这里按游戏串行排队。
+    const prev = tagQueue.get(gameId) ?? Promise.resolve();
+    const run = prev.then(async () => {
+      const g = byId(get().games, gameId);
+      if (!g) return;
+      const has = g.tags.some((t) => t.id === tagId);
+      const tagIds = has ? g.tags.filter((t) => t.id !== tagId).map((t) => t.id) : [...g.tags.map((t) => t.id), tagId];
+      try {
+        await api.setTags(gameId, tagIds);
+        await get().reload();
+      } catch (e) {
+        toast.warn("标签保存失败", String(e));
+      }
+    });
+    tagQueue.set(
+      gameId,
+      run.catch(() => undefined),
+    );
+    return run;
   },
 
   async launch(id) {
+    // 已经在启动中：直接当成成功，避免双击拉起两个进程 / 弹两条错误提示
+    if (get().launching[id]) return { ok: true, focused: false };
     const g = byId(get().games, id);
     if (!g) return { ok: false, error: "游戏不存在" };
+    set((s) => ({ launching: { ...s.launching, [id]: true } }));
     try {
       const info = await api.launch(id);
       set((s) => ({
@@ -245,6 +286,12 @@ export const useApp = create<AppState>((set, get) => ({
       return { ok: true, focused: info.focused };
     } catch (e) {
       return { ok: false, error: String(e) };
+    } finally {
+      set((s) => {
+        const launching = { ...s.launching };
+        delete launching[id];
+        return { launching };
+      });
     }
   },
 
@@ -295,7 +342,13 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async unlockAchievement(gameId, achievementId, unlocked) {
-    await api.setAchievementUnlocked(achievementId, unlocked);
+    try {
+      await api.setAchievementUnlocked(achievementId, unlocked);
+    } catch (e) {
+      // 写失败就别把界面改成「已达成」
+      toast.warn("成就标记失败", String(e));
+      return;
+    }
     set((s) => {
       const list = (s.achievements[gameId] ?? []).map((a) =>
         a.id === achievementId
@@ -374,20 +427,24 @@ export const useApp = create<AppState>((set, get) => ({
     set({ refreshing: true, refreshProgress: { done: 0, total: targets.length } });
     let ok = 0;
     let fail = 0;
-    for (let i = 0; i < targets.length; i++) {
-      // 先把「正在拉第 i 个」标出来，避免界面停在 0/N 看起来卡死
-      set({ refreshProgress: { done: i, total: targets.length } });
-      try {
-        await api.refreshSteamData(targets[i].id, true);
-        ok++;
-      } catch {
-        fail++;
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        // 先把「正在拉第 i 个」标出来，避免界面停在 0/N 看起来卡死
+        set({ refreshProgress: { done: i, total: targets.length } });
+        try {
+          await api.refreshSteamData(targets[i].id, true);
+          ok++;
+        } catch {
+          fail++;
+        }
+        set({ refreshProgress: { done: i + 1, total: targets.length } });
+        if (i < targets.length - 1) await new Promise((r) => setTimeout(r, 300));
       }
-      set({ refreshProgress: { done: i + 1, total: targets.length } });
-      if (i < targets.length - 1) await new Promise((r) => setTimeout(r, 300));
+      await get().reload();
+    } finally {
+      // reload 失败也要复位，否则顶栏「刷新全部资料」会永久置灰
+      set({ refreshing: false, refreshProgress: null });
     }
-    await get().reload();
-    set({ refreshing: false, refreshProgress: null });
     return { ok, fail, total: targets.length };
   },
 
@@ -433,8 +490,13 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async patchSettings(patch) {
-    const settings = await api.saveSettings(patch);
-    set({ settings, cardSize: settings.cardSize, viewMode: settings.viewMode });
+    try {
+      const settings = await api.saveSettings(patch);
+      set({ settings, cardSize: settings.cardSize, viewMode: settings.viewMode });
+    } catch (e) {
+      toast.warn("设置保存失败", String(e));
+      throw e;
+    }
   },
 
   markStarted(gameId, pid, startedAt) {

@@ -1,5 +1,6 @@
 pub mod focus;
 pub mod job;
+pub mod process;
 
 use chrono::Utc;
 use serde::Serialize;
@@ -16,6 +17,8 @@ use crate::util::split_args;
 use crate::watcher::job::{handle_of, Job};
 
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+/// 挂起创建：先绑作业再恢复执行，保证整棵进程树都在作业里。
+pub const CREATE_SUSPENDED: u32 = 0x0000_0004;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,7 +42,7 @@ pub struct Running {
     pub pid: u32,
     pub started_at: String,
     pub log_id: i64,
-    /// 用来在「切回游戏」时枚举整棵进程树的窗口
+    /// 用来在「切回游戏」时枚举整棵进程树的窗口；重启后接管的会话没有作业句柄
     pub job: Option<Arc<Job>>,
 }
 
@@ -113,13 +116,23 @@ pub fn spawn_and_watch(
         cmd.args(split_args(raw));
     }
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
 
     let mut child = cmd.spawn()?;
     let pid = child.id();
-    let started_at = Utc::now().to_rfc3339();
 
-    let job = Job::create().filter(|j| j.assign(handle_of(&child))).map(Arc::new);
+    // 此时进程还没有执行任何指令：建作业并绑定，再恢复主线程。
+    let job = Job::create()
+        .and_then(|j| if j.assign(handle_of(&child)) { Some(j) } else { None })
+        .map(Arc::new);
+    let resumed = process::resume_threads(pid);
+    if resumed == 0 {
+        // 恢复失败会让窗口永远不出现（进程挂起），宁可如实报错
+        let _ = child.kill();
+        anyhow::bail!("启动失败：进程已创建但无法恢复执行");
+    }
+
+    let started_at = Utc::now().to_rfc3339();
 
     procs.lock().unwrap().insert(
         game_id.clone(),
@@ -130,12 +143,14 @@ pub fn spawn_and_watch(
             job: job.clone(),
         },
     );
+    if let Ok(conn) = db.lock() {
+        let _ = crate::db::save_running_session(&conn, &game_id, pid, &started_at, log_id);
+    }
 
     let app_clone = app.clone();
     let game = game_id.clone();
     let started = started_at.clone();
     std::thread::spawn(move || {
-        let mut zero_ticks = 0;
         let mut tick: u32 = 0;
         let mut exit_code: Option<i32> = None;
 
@@ -143,47 +158,29 @@ pub fn spawn_and_watch(
             std::thread::sleep(Duration::from_millis(1000));
             tick += 1;
 
-            let still_alive = match &job {
-                Some(job) => match job.active_processes() {
-                    Some(0) => {
-                        zero_ticks += 1;
-                        // 再确认一次，避免刚 spawn 时的计数空窗
-                        zero_ticks < 2
-                    }
-                    Some(_) => {
-                        // 根进程可能先退出、子进程还在；先记下根进程退出码，
-                        // 但继续等 Job 里的进程树结束。
-                        if let Ok(Some(status)) = child.try_wait() {
-                            exit_code = status.code();
-                        }
-                        true
-                    }
-                    None => match child.try_wait() {
-                        Ok(Some(status)) => {
-                            exit_code = status.code();
-                            false
-                        }
-                        Ok(None) => true,
-                        Err(_) => false,
-                    },
-                },
-                None => match child.try_wait() {
-                    Ok(Some(status)) => {
+            // 根进程先退出、子进程还在的情况很常见（包装器启动），
+            // 所以存活判据是「根进程活着 或 作业里还有进程」。
+            let mut root_alive = false;
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if exit_code.is_none() {
                         exit_code = status.code();
-                        false
                     }
-                    Ok(None) => true,
-                    Err(_) => false,
-                },
-            };
-
-            if !still_alive && exit_code.is_none() {
-                if let Ok(Some(status)) = child.try_wait() {
-                    exit_code = status.code();
                 }
+                Ok(None) => root_alive = true,
+                Err(_) => {}
+            }
+            let job_alive = job
+                .as_ref()
+                .and_then(|j| j.active_processes())
+                .map(|n| n > 0)
+                .unwrap_or(false);
+
+            if !root_alive && !job_alive {
+                break;
             }
 
-            if still_alive && tick % 30 == 0 {
+            if tick % 30 == 0 {
                 let elapsed = chrono::DateTime::parse_from_rfc3339(&started)
                     .map(|s| (Utc::now() - s.with_timezone(&Utc)).num_seconds().max(0))
                     .unwrap_or(0);
@@ -191,47 +188,109 @@ pub fn spawn_and_watch(
                     let _ = crate::db::checkpoint_session(&conn, log_id, elapsed);
                 }
             }
-
-            if !still_alive {
-                break;
-            }
         }
 
-        // 结束：结算时长、写日志、通知前端
-        let session_sec = chrono::DateTime::parse_from_rfc3339(&started)
-            .map(|s| (Utc::now() - s.with_timezone(&Utc)).num_seconds().max(0))
-            .unwrap_or(0);
-
-        {
-            let conn = db.lock().unwrap();
-            let _ = crate::db::log_session_end(&conn, log_id, exit_code, session_sec);
-            // 不足 5 秒视为误触/闪退，不计入时长
-            if session_sec >= 5 {
-                let _ = crate::db::add_playtime(&conn, &game, session_sec);
-            }
-        }
-        procs.lock().unwrap().remove(&game);
-
-        let crashed = exit_code.map(|c| c != 0).unwrap_or(false) && session_sec < 120;
-        let game_for_sync = game.clone();
-        let _ = app_clone.emit(
-            "game://exited",
-            ExitedEvent {
-                game_id: game,
-                exit_code,
-                session_sec,
-                crashed,
-            },
-        );
-
-        // 退出后自动同步一次成就（本地文件或 Steam 账号），不阻塞结算
-        let app_sync = app_clone.clone();
-        tauri::async_runtime::spawn(async move {
-            crate::commands::sync::auto_sync_game(app_sync, game_for_sync).await;
-        });
+        finish_session(app_clone, db, procs, game, log_id, started, exit_code);
     });
 
     Ok((pid, started_at))
+}
+
+/// 星匣重启后接管仍在运行的游戏：没有作业句柄，只按 pid + 创建时间认领。
+pub fn resume_recovered(
+    app: AppHandle,
+    db: Arc<Mutex<Connection>>,
+    procs: Procs,
+    rows: Vec<crate::models::RunningSession>,
+) {
+    for row in rows {
+        if !process::still_ours(row.pid, &row.started_at) || !process::alive(row.pid) {
+            if let Ok(conn) = db.lock() {
+                let _ = crate::db::clear_running_session(&conn, &row.game_id);
+            }
+            continue;
+        }
+        procs.lock().unwrap().insert(
+            row.game_id.clone(),
+            Running {
+                pid: row.pid,
+                started_at: row.started_at.clone(),
+                log_id: row.log_id,
+                job: None,
+            },
+        );
+
+        let app = app.clone();
+        let db = db.clone();
+        let procs = procs.clone();
+        let game = row.game_id.clone();
+        let started = row.started_at.clone();
+        let log_id = row.log_id;
+        let pid = row.pid;
+        std::thread::spawn(move || {
+            let mut tick: u32 = 0;
+            loop {
+                std::thread::sleep(Duration::from_millis(1000));
+                tick += 1;
+                if !process::alive(pid) {
+                    break;
+                }
+                if tick % 30 == 0 {
+                    let elapsed = chrono::DateTime::parse_from_rfc3339(&started)
+                        .map(|s| (Utc::now() - s.with_timezone(&Utc)).num_seconds().max(0))
+                        .unwrap_or(0);
+                    if let Ok(conn) = db.lock() {
+                        let _ = crate::db::checkpoint_session(&conn, log_id, elapsed);
+                    }
+                }
+            }
+            finish_session(app, db, procs, game, log_id, started, None);
+        });
+    }
+}
+
+/// 会话收尾：结算时长、清运行记录、通知前端、补同步成就。
+fn finish_session(
+    app: AppHandle,
+    db: Arc<Mutex<Connection>>,
+    procs: Procs,
+    game: String,
+    log_id: i64,
+    started: String,
+    exit_code: Option<i32>,
+) {
+    let session_sec = chrono::DateTime::parse_from_rfc3339(&started)
+        .map(|s| (Utc::now() - s.with_timezone(&Utc)).num_seconds().max(0))
+        .unwrap_or(0);
+
+    {
+        let conn = db.lock().unwrap();
+        let _ = crate::db::log_session_end(&conn, log_id, exit_code, session_sec);
+        // 不足 5 秒视为误触/闪退，不计入时长
+        if session_sec >= 5 {
+            let _ = crate::db::add_playtime(&conn, &game, session_sec);
+        }
+        let _ = crate::db::clear_running_session(&conn, &game);
+    }
+    procs.lock().unwrap().remove(&game);
+
+    let crashed = exit_code.map(|c| c != 0).unwrap_or(false) && session_sec < 120;
+    let game_for_sync = game.clone();
+    let _ = app.emit(
+        "game://exited",
+        ExitedEvent {
+            game_id: game,
+            exit_code,
+            session_sec,
+            crashed,
+        },
+    );
+
+    // 退出后自动同步一次成就（本地文件或 Steam 账号），不阻塞结算
+    let app_sync = app.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::commands::sync::auto_sync_game(app_sync, game_for_sync).await;
+    });
 }
 
 /// 结束整棵进程树（taskkill /T 会带上子进程）

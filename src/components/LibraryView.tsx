@@ -10,6 +10,7 @@ export function LibraryView() {
   const hasVisible = useApp((s) =>
     s.games.some((g) => !g.hidden || (s.settings?.showHidden ?? false)),
   );
+  const loadError = useApp((s) => s.loadError);
   const ref = useRef<HTMLDivElement>(null);
 
   // 顶光跟着指针横移，600ms 缓出（CSS 变量插值）
@@ -35,6 +36,16 @@ export function LibraryView() {
   return (
     <div className="library-view view-in" ref={ref}>
       <TopBar />
+      {/* 数据库/命令失败时说清楚，别让用户以为库被清空了 */}
+      {loadError && (
+        <div className="lib-error">
+          <div className="t">游戏库加载失败</div>
+          <div className="h">{loadError}</div>
+          <button className="chip is-on" onClick={() => void useApp.getState().bootstrap()}>
+            重试
+          </button>
+        </div>
+      )}
       <LibraryHero />
       {hasVisible && <GameWall />}
     </div>

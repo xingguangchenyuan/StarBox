@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Game, SortKey } from "@/types";
 import { useApp } from "@/stores/app";
 import { useUi } from "@/stores/ui";
@@ -183,6 +183,8 @@ function GameRow({ game, onMenu }: { game: Game; onMenu: MenuHandler }) {
   );
 }
 
+const SCROLL_KEY = "sb.libraryScroll";
+
 export function GameWall() {
   const games = useApp((s) => s.games);
   const view = useApp((s) => s.view);
@@ -201,10 +203,38 @@ export function GameWall() {
   const removeGame = useApp((s) => s.removeGame);
   const reload = useApp((s) => s.reload);
   const open = useUi((s) => s.open);
+  const wallRef = useRef<HTMLDivElement>(null);
+  const filtersRef = useRef("");
   const [menu, setMenu] = useState<{ x: number; y: number; game: Game } | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [sortOpen, setSortOpen] = useState<{ x: number; y: number } | null>(null);
   const [dir, setDir] = useState<"asc" | "desc" | null>(null);
+
+  // 从详情页返回时封面墙位置不丢：挂载时还原，滚动时记下。
+  // 用 sessionStorage 而不是组件 state：详情页会卸载整个库视图。
+  useEffect(() => {
+    const el = wallRef.current;
+    if (!el) return;
+    const saved = Number(sessionStorage.getItem(SCROLL_KEY) || "0");
+    if (saved > 0) el.scrollTop = saved;
+    const onScroll = () => sessionStorage.setItem(SCROLL_KEY, String(el.scrollTop));
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // 换筛选/搜索/排序/视图后回到顶部，否则会停在上一组结果的位置。
+  // 用「上次的筛选签名」比较而不是 useRef(bool)：StrictMode 会把 effect 跑两遍，
+  // 布尔开关会在第二次误判成「切换了筛选」把刚还原的位置清掉。
+  useEffect(() => {
+    const key = [view, platform, query, sort, viewMode].join("|");
+    const prev = filtersRef.current;
+    filtersRef.current = key;
+    if (!prev || prev === key) return;
+    const el = wallRef.current;
+    if (el) el.scrollTop = 0;
+    sessionStorage.setItem(SCROLL_KEY, "0");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, platform, query, sort, viewMode]);
 
   const onMenu: MenuHandler = (e, game) => {
     setConfirmRemove(false);
@@ -322,7 +352,7 @@ export function GameWall() {
         </div>
       </div>
 
-      <div className={`wall ${viewMode === "grid" ? (cardSize === "large" ? "wide-view" : "grid-view") : ""}`}>
+      <div ref={wallRef} className={`wall ${viewMode === "grid" ? (cardSize === "large" ? "wide-view" : "grid-view") : ""}`}>
         {list.length === 0 ? (
           <div className="wall-empty">
             <div className="t">{query ? `没有找到“${query}”` : t("shelf.emptyTitle")}</div>

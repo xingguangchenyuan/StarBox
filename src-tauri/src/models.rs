@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+/// 星匣退出时仍在跑的游戏。下次启动据此认领会话，避免「重新打开后以为没在运行」。
+#[derive(Debug, Clone)]
+pub struct RunningSession {
+    pub game_id: String,
+    pub pid: u32,
+    pub started_at: String,
+    pub log_id: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tag {

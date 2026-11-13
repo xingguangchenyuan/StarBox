@@ -63,7 +63,8 @@ pub fn add_game(
     path: String,
     work_dir: Option<String>,
 ) -> Result<Game, String> {
-    let conn = state.db();
+    // 路径解析 / 目录递归 / 版本信息读取都可能在网络盘或大目录上耗时，
+    // 全部放在 DB 锁之外做，否则整个界面会跟着卡住。
     let mut target = resolve_target(&path).map_err(err)?;
     // 从「扫描文件夹」加进来时，启动器知道游戏根目录——用它当工作目录比
     // exe 所在的 bin\Win64 更接近游戏预期的安装目录。
@@ -74,12 +75,6 @@ pub fn add_game(
         }
     }
     let exe_str = target.exe.display().to_string();
-
-    if let Some(existing) = find_by_exe(&conn, &exe_str).map_err(err)? {
-        return db::get_game(&conn, &existing)
-            .map_err(err)?
-            .ok_or_else(|| "读取失败".to_string());
-    }
 
     let appid = infer_appid(&target.exe);
     // platform 表示「安装来源」，不是「有没有 Steam AppID」。
@@ -92,21 +87,29 @@ pub fn add_game(
     } else {
         "local"
     };
-    let new = NewGame {
-        title: target.title,
-        title_en: None,
-        appid,
-        platform: platform.to_string(),
-        exe_path: Some(exe_str),
-        work_dir: Some(target.work_dir.display().to_string()),
-        args: target.args,
-        playtime_sec: 0,
-        last_played_at: None,
-        cover_path: None,
-        banner_path: None,
+
+    let id = {
+        let conn = state.db();
+        if let Some(existing) = find_by_exe(&conn, &exe_str).map_err(err)? {
+            return db::get_game(&conn, &existing)
+                .map_err(err)?
+                .ok_or_else(|| "读取失败".to_string());
+        }
+        let new = NewGame {
+            title: target.title,
+            title_en: None,
+            appid,
+            platform: platform.to_string(),
+            exe_path: Some(exe_str),
+            work_dir: Some(target.work_dir.display().to_string()),
+            args: target.args,
+            playtime_sec: 0,
+            last_played_at: None,
+            cover_path: None,
+            banner_path: None,
+        };
+        insert_game(&conn, &new).map_err(err)?
     };
-    let id = insert_game(&conn, &new).map_err(err)?;
-    drop(conn);
 
     // 有 AppID 就在后台抓一次商店资料与封面
     if appid.is_some() {
@@ -317,7 +320,7 @@ pub fn update_game_paths(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_game_cover(state: State<'_, AppState>, game_id: String, path: Option<String>) -> Result<(), String> {
     let conn = state.db();
 

@@ -18,15 +18,38 @@ use crate::state::AppState;
 
 pub fn run() {
     let data_dir = state::data_dir();
-    let conn = rusqlite::Connection::open(data_dir.join("starbox.db"))
-        .expect("无法打开本地数据库");
-    db::init(&conn).expect("数据库初始化失败");
-    // 上次星匣退出/崩溃时游戏可能还在跑：把最后检查点结算掉，避免永久挂起的会话。
-    if let Err(e) = db::recover_open_sessions(&conn) {
+    let db_path = data_dir.join("starbox.db");
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => fatal(&format!(
+            "无法打开本地数据库：{e}\n\n路径：{}\n\n请确认文件没有被占用、磁盘可写。",
+            db_path.display()
+        )),
+    };
+    if let Err(e) = db::init(&conn) {
+        fatal(&format!(
+            "数据库初始化失败：{e}\n\n路径：{}\n\n如果反复出现，可以备份后删除该文件再启动。",
+            db_path.display()
+        ));
+    }
+
+    // 上次星匣退出/崩溃时游戏可能还在跑：
+    // 进程还活着的会话留给后面接管，其余把最后检查点结算掉，避免永久挂起的会话。
+    let mut recovered = db::list_running_sessions(&conn).unwrap_or_default();
+    let mut keep: Vec<i64> = Vec::new();
+    for row in &recovered {
+        if watcher::process::still_ours(row.pid, &row.started_at) {
+            keep.push(row.log_id);
+        } else {
+            let _ = db::clear_running_session(&conn, &row.game_id);
+        }
+    }
+    recovered.retain(|r| keep.contains(&r.log_id));
+    if let Err(e) = db::recover_open_sessions(&conn, &keep) {
         eprintln!("恢复未结算会话失败：{e}");
     }
 
-    let app_state = state::AppState::new(conn, data_dir);
+    let app_state = state::AppState::new(conn, data_dir, recovered);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -95,6 +118,16 @@ pub fn run() {
                 let _ = window.show();
             }
 
+            // 接管上次没关掉、现在还在跑的游戏（没有作业句柄，按 pid + 创建时间认领）
+            let state = app.state::<AppState>();
+            let pending = state.take_recovered();
+            if !pending.is_empty() {
+                let handle = app.handle().clone();
+                let db = state.db.clone();
+                let procs = state.procs.clone();
+                watcher::resume_recovered(handle, db, procs, pending);
+            }
+
             // 启动后台把没认领的本地游戏匹配到 Steam（低干扰、只做高置信度）
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -105,4 +138,22 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("星匣启动失败");
+}
+
+/// 启动期致命错误：release 没有控制台，必须弹窗告诉用户原因，否则进程直接消失。
+fn fatal(message: &str) -> ! {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+        let text: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+        let title: Vec<u16> = "星匣 StarBox".encode_utf16().chain(std::iter::once(0)).collect();
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+    eprintln!("{message}");
+    std::process::exit(1);
 }

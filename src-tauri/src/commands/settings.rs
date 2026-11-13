@@ -29,7 +29,7 @@ fn build_settings(state: &AppState) -> Settings {
 
 /// 打开 StarBox 自己的数据目录。只允许这一个目录，不走通用 openPath 权限，
 /// 避免为了「打开数据目录」放开任意文件路径。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_data_dir(state: State<'_, AppState>) -> Result<(), String> {
     std::process::Command::new("explorer")
         .arg(&state.data_dir)
@@ -38,7 +38,7 @@ pub fn open_data_dir(state: State<'_, AppState>) -> Result<(), String> {
         .map_err(|e| format!("打开数据目录失败：{e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_settings(state: State<'_, AppState>) -> Settings {
     build_settings(&state)
 }
@@ -58,7 +58,7 @@ pub struct SettingsPatch {
     pub show_hidden: Option<bool>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_settings(state: State<'_, AppState>, patch: SettingsPatch) -> Result<Settings, String> {
     if patch.clear_api_key == Some(true) {
         secret::clear_api_key().map_err(|e| format!("清除 Key 失败：{e}"))?;

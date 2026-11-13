@@ -3,21 +3,30 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 
+use crate::models::RunningSession;
 use crate::watcher::Procs;
 
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub procs: Procs,
     pub data_dir: PathBuf,
+    /// 上次星匣退出时仍在运行、这次启动需要接管的会话
+    pub recovered: Mutex<Vec<RunningSession>>,
 }
 
 impl AppState {
-    pub fn new(conn: Connection, data_dir: PathBuf) -> Self {
+    pub fn new(conn: Connection, data_dir: PathBuf, recovered: Vec<RunningSession>) -> Self {
         Self {
             db: Arc::new(Mutex::new(conn)),
             procs: Arc::new(Mutex::new(std::collections::HashMap::new())),
             data_dir,
+            recovered: Mutex::new(recovered),
         }
+    }
+
+    /// 取走待接管的会话（只取一次）
+    pub fn take_recovered(&self) -> Vec<RunningSession> {
+        std::mem::take(&mut *self.recovered.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     pub fn cover_dir(&self) -> PathBuf {

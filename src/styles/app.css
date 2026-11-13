@@ -3748,6 +3748,29 @@ input.field:focus {
   background: var(--hi);
 }
 
+/* 加载失败：和空状态区分开，明确是出错而不是「没有游戏」 */
+.lib-error {
+  margin: 16px 32px 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--warn) 38%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+
+.lib-error .t {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.lib-error .h {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin-bottom: 10px;
+  word-break: break-all;
+}
+
 /* 空状态 */
 .wall-empty {
   padding: 48px 4px;

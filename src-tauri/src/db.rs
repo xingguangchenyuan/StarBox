@@ -222,6 +222,14 @@ pub fn init(conn: &Connection) -> Result<()> {
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        -- 正在运行的会话：星匣退出后仍可据此认领，避免把同一个游戏再拉一遍
+        CREATE TABLE IF NOT EXISTS running_sessions (
+            game_id    TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+            pid        INTEGER NOT NULL,
+            started_at TEXT NOT NULL,
+            log_id     INTEGER NOT NULL
+        );
         "#,
     )?;
 
@@ -235,18 +243,24 @@ pub fn init(conn: &Connection) -> Result<()> {
 
     // platform 是安装来源，不是资料提供商。旧版本匹配 Steam 时会把本地副本
     // 也改成 steam；按实际安装路径纠正一次（Steam 库 / Epic / 其他本地）。
-    conn.execute_batch(
-        r#"
-        UPDATE games
-           SET platform = CASE
-                 WHEN lower(exe_path) LIKE '%\steamapps\common\%' THEN 'steam'
-                 WHEN lower(exe_path) LIKE '%\epic games\%' THEN 'epic'
-                 WHEN platform = 'epic' THEN 'epic'
-                 ELSE 'local'
-               END
-         WHERE exe_path IS NOT NULL AND trim(exe_path) <> '';
-        "#,
-    )?;
+    // 必须只跑一次：本地游戏被自动匹配后会写成 platform='steam'，如果每次启动
+    // 都纠正，Steam 来源标记和成就页的「拉取成就」入口下次启动就没了。
+    let platform_fixed = get_setting(conn, "platform_fix_v1").ok().flatten().is_some();
+    if !platform_fixed {
+        conn.execute_batch(
+            r#"
+            UPDATE games
+               SET platform = CASE
+                     WHEN lower(exe_path) LIKE '%\steamapps\common\%' THEN 'steam'
+                     WHEN lower(exe_path) LIKE '%\epic games\%' THEN 'epic'
+                     WHEN platform = 'epic' THEN 'epic'
+                     ELSE 'local'
+                   END
+             WHERE exe_path IS NOT NULL AND trim(exe_path) <> '';
+            "#,
+        )?;
+        let _ = set_setting(conn, "platform_fix_v1", "1");
+    }
 
     // 老库只有 PRAGMA foreign_keys=ON，没有真正的 REFERENCES。
     // 这里做一次事务性重建，给子表补上 ON DELETE CASCADE；失败就保留旧表，
@@ -562,7 +576,8 @@ pub fn checkpoint_session(conn: &Connection, log_id: i64, session_sec: i64) -> R
 
 /// 启动时收尾上次没结算的会话：把最后检查点计入游戏时长，并补上结束时间。
 /// 星匣退出时游戏可能仍在运行，这里只结算“已经观测到”的部分，不伪造结束原因。
-pub fn recover_open_sessions(conn: &Connection) -> Result<()> {
+/// `keep` 里是即将被接管的会话（进程还活着），不能结算。
+pub fn recover_open_sessions(conn: &Connection, keep: &[i64]) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     let rows: Vec<(i64, String, Option<i64>)> = {
         let mut stmt = tx.prepare(
@@ -575,6 +590,9 @@ pub fn recover_open_sessions(conn: &Connection) -> Result<()> {
     };
     let now = Utc::now().to_rfc3339();
     for (id, game_id, session_sec) in rows {
+        if keep.contains(&id) {
+            continue;
+        }
         let sec = session_sec.unwrap_or(0).max(0);
         if sec > 0 {
             tx.execute(
@@ -589,6 +607,42 @@ pub fn recover_open_sessions(conn: &Connection) -> Result<()> {
     }
     tx.commit()?;
     Ok(())
+}
+
+/// 记录「正在运行」的会话，星匣异常退出/被关掉后下次启动可以认领。
+pub fn save_running_session(
+    conn: &Connection,
+    game_id: &str,
+    pid: u32,
+    started_at: &str,
+    log_id: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO running_sessions (game_id, pid, started_at, log_id) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(game_id) DO UPDATE SET pid = excluded.pid, started_at = excluded.started_at,
+                                            log_id = excluded.log_id",
+        params![game_id, pid as i64, started_at, log_id],
+    )?;
+    Ok(())
+}
+
+pub fn clear_running_session(conn: &Connection, game_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM running_sessions WHERE game_id = ?1", params![game_id])?;
+    Ok(())
+}
+
+pub fn list_running_sessions(conn: &Connection) -> Result<Vec<crate::models::RunningSession>> {
+    let mut stmt =
+        conn.prepare("SELECT game_id, pid, started_at, log_id FROM running_sessions")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(crate::models::RunningSession {
+            game_id: r.get(0)?,
+            pid: r.get::<_, i64>(1)?.max(0) as u32,
+            started_at: r.get(2)?,
+            log_id: r.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 pub fn log_session_end(conn: &Connection, log_id: i64, exit_code: Option<i32>, session_sec: i64) -> Result<()> {

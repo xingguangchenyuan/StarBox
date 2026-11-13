@@ -313,11 +313,10 @@ export function GameView({ gameId }: { gameId: string }) {
               <ModsPane game={game} />
             </div>
           )}
-          {tab === "opts" && (
-            <div className="pane-fade" key="opts">
-              <OptionsPane game={game} />
-            </div>
-          )}
+          {/* 启动选项常驻挂载、切走时只隐藏：否则「未保存的修改」会随卸载静默丢失 */}
+          <div className="pane-fade" style={{ display: tab === "opts" ? undefined : "none" }}>
+            <OptionsPane game={game} />
+          </div>
         </div>
       </section>
 

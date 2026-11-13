@@ -100,6 +100,27 @@ fn build(proxy: Option<&str>) -> Result<reqwest::Client> {
     Ok(b.build()?)
 }
 
+/// 响应体上限：文本（JSON / HTML）8 MB，图片 32 MB。
+/// 代理被劫持或配置错误时可能回一个超大响应，不能整包读进内存。
+const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_BIN_BYTES: usize = 32 * 1024 * 1024;
+
+async fn read_limited(mut resp: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+    if let Some(n) = resp.content_length() {
+        if n as usize > limit {
+            return Err(anyhow!("响应体过大（{n} 字节，上限 {limit}）"));
+        }
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(safe_reqwest_error)? {
+        if buf.len() + chunk.len() > limit {
+            return Err(anyhow!("响应体超过 {limit} 字节上限"));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
 /// GET 一段文本。先按系统代理走，失败再直连；两者都失败时返回更具体的那个错误。
 pub async fn get_text(url: &str) -> Result<String> {
     let mut last_err: Option<anyhow::Error> = None;
@@ -109,7 +130,8 @@ pub async fn get_text(url: &str) -> Result<String> {
             Ok(client) => match client.get(url).send().await {
                 Ok(resp) => {
                     let status = resp.status();
-                    let text = resp.text().await.map_err(safe_reqwest_error)?;
+                    let bytes = read_limited(resp, MAX_TEXT_BYTES).await?;
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
                     if status.is_success() {
                         return Ok(text);
                     }
@@ -132,11 +154,11 @@ pub async fn get_text(url: &str) -> Result<String> {
             .unwrap_or(direct)
     })?;
     let status = resp.status();
-    let text = resp.text().await.map_err(safe_reqwest_error)?;
+    let bytes = read_limited(resp, MAX_TEXT_BYTES).await?;
     if !status.is_success() {
         return Err(anyhow!("HTTP {}", status.as_u16()));
     }
-    Ok(text)
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 pub async fn get_json(url: &str) -> Result<serde_json::Value> {
@@ -189,7 +211,7 @@ pub async fn download(url: &str, dest: &std::path::Path) -> Result<()> {
                     last_err = Some(anyhow!("图片下载失败 HTTP {}", resp.status()));
                     continue;
                 }
-                let bytes = resp.bytes().await.map_err(safe_reqwest_error)?;
+                let bytes = read_limited(resp, MAX_BIN_BYTES).await?;
                 if bytes.len() < 256 {
                     last_err = Some(anyhow!("图片内容异常"));
                     continue;
@@ -197,7 +219,14 @@ pub async fn download(url: &str, dest: &std::path::Path) -> Result<()> {
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::write(dest, &bytes)?;
+                // 先写临时文件再改名：下载中断不会留下半截图被当成有效封面
+                let tmp = dest.with_extension("part");
+                std::fs::write(&tmp, &bytes)?;
+                let _ = std::fs::remove_file(dest);
+                if let Err(e) = std::fs::rename(&tmp, dest) {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e.into());
+                }
                 return Ok(());
             }
             Err(e) => last_err = Some(safe_reqwest_error(e)),

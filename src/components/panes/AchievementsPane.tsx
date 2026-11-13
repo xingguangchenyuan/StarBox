@@ -235,7 +235,8 @@ export function AchievementsPane({ game }: { game: Game }) {
               : t("ach.emptyLocal")}
           </p>
           <div className="actions">
-            {game.platform === "steam" && game.appid ? (
+            {/* 只要绑定了 AppID 就能拉定义，与「安装来源」无关 */}
+            {game.appid ? (
               <button className="btn-primary" onClick={() => void fetchDefs()}>
                 <IconDownload size={12} />
                 {t("ach.fetchSteam")}

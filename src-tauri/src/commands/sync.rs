@@ -30,7 +30,11 @@ fn game_info(conn: &Connection, game_id: &str) -> Result<GameInfo> {
             })
         },
     )
-    .map_err(|_| anyhow!("游戏不存在"))
+    .map_err(|e| match e {
+        // 只有「没查到」才是游戏不存在；锁超时、库损坏要如实报出来
+        rusqlite::Error::QueryReturnedNoRows => anyhow!("游戏不存在"),
+        other => anyhow!("读取游戏信息失败：{other}"),
+    })
 }
 
 fn appdata_dir() -> Option<PathBuf> {
