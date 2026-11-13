@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>星匣 StarBox — 原型索引</title>
+<style>
+  :root {
+    --bg:#0a0f15; --stage:#0e141b; --panel:#16202d; --line:#23364b;
+    --text:#e6edf5; --text-2:#8ba1b8; --text-3:#5c7085; --hi:#66c0f4;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:var(--bg); color:var(--text);
+    font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:56px 64px; min-height:100vh;
+  }
+  .mono { font-family:"Cascadia Mono",Consolas,monospace; }
+
+  .head { max-width:1180px; margin:0 auto 30px; }
+  .eyebrow { font-size:10px; letter-spacing:.18em; color:var(--hi); margin-bottom:12px; }
+  h1 { font-size:30px; font-weight:800; letter-spacing:-.02em; margin-bottom:10px; }
+  h1 em { font-style:normal; font-size:13px; font-weight:400; letter-spacing:.14em; color:var(--text-3); margin-left:14px; }
+  .sub { font-size:12.5px; color:var(--text-2); line-height:1.8; max-width:720px; }
+
+  /* 主入口 */
+  a.live {
+    display:flex; align-items:center; gap:18px; text-decoration:none; color:inherit;
+    max-width:1180px; margin:0 auto 26px; padding:20px 22px;
+    border:1px solid rgba(102,192,244,.32); border-radius:12px;
+    background:linear-gradient(100deg, rgba(102,192,244,.10), rgba(22,32,45,.6));
+    transition:border-color .2s, background .2s;
+  }
+  a.live:hover { border-color:rgba(102,192,244,.62); background:linear-gradient(100deg, rgba(102,192,244,.15), rgba(22,32,45,.7)); }
+  a.live .badge {
+    display:flex; align-items:center; gap:6px; height:22px; padding:0 9px; border-radius:999px;
+    background:rgba(127,212,162,.14); border:1px solid rgba(127,212,162,.3);
+    color:#7fd4a2; font-size:10px; letter-spacing:.1em; flex:0 0 auto;
+  }
+  a.live .badge i { width:5px; height:5px; border-radius:50%; background:#7fd4a2; }
+  a.live .lt { font-size:16px; font-weight:700; margin-bottom:5px; }
+  a.live .ld { font-size:12px; color:var(--text-2); line-height:1.7; }
+  a.live .lf { margin-left:auto; flex:0 0 auto; font-family:"Cascadia Mono",Consolas,monospace; font-size:11px; color:var(--hi); }
+
+  h2.sec {
+    max-width:1180px; margin:0 auto 14px; font-size:11px; font-weight:400;
+    letter-spacing:.16em; color:var(--text-3);
+  }
+
+  .grid { max-width:1180px; margin:0 auto; display:grid; grid-template-columns:repeat(3,1fr); gap:20px; }
+  a.card {
+    display:block; text-decoration:none; color:inherit;
+    border:1px solid var(--line); border-radius:10px; overflow:hidden;
+    background:var(--panel); transition:border-color .2s;
+  }
+  a.card:hover { border-color:rgba(102,192,244,.5); }
+  .card img { display:block; width:100%; height:auto; border-bottom:1px solid var(--line); }
+  .card .cap { padding:13px 15px 15px; }
+  .card .k { font-size:10px; letter-spacing:.14em; color:var(--hi); margin-bottom:6px; }
+  .card .t { font-size:14px; font-weight:700; margin-bottom:5px; }
+  .card .d { font-size:11.5px; color:var(--text-2); line-height:1.6; }
+  .card .f { font-family:"Cascadia Mono",Consolas,monospace; font-size:10px; color:var(--text-3); margin-top:8px; }
+
+  .changes {
+    max-width:1180px; margin:26px auto 0; padding:16px 20px;
+    border:1px solid var(--line); border-radius:10px; background:rgba(22,32,45,.42);
+  }
+  .changes h3 { font-size:12px; font-weight:700; margin-bottom:10px; color:var(--text-2); }
+  .changes ul { list-style:none; display:grid; gap:7px; }
+  .changes li { font-size:11.5px; line-height:1.75; color:var(--text-2); padding-left:15px; position:relative; }
+  .changes li::before {
+    content:""; position:absolute; left:0; top:8px;
+    width:5px; height:5px; border-radius:50%; background:var(--hi); opacity:.6;
+  }
+  .changes b { color:var(--text); font-weight:600; }
+
+  .foot { max-width:1180px; margin:30px auto 0; font-size:11px; color:var(--text-3);
+          border-top:1px solid #1a2a3c; padding-top:16px; line-height:1.9; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="eyebrow">星匣 STARBOX · 视觉原型 v2</div>
+    <h1>星匣<em>WINDOWS GAME LAUNCHER</em></h1>
+    <p class="sub">
+      封面图为占位图形，正式版由 Steam 胶囊图 / 商店头图替换。
+      色板与字体见需求确认书第九章。v2 把导航与分类合并成一组，下方接所有游戏列表。
+    </p>
+  </div>
+
+  <a class="live" href="app.html">
+    <span class="badge"><i></i>可交互</span>
+    <span>
+      <span class="lt" style="display:block">打开完整原型</span>
+      <span class="ld">左侧栏点任意游戏 → 右侧立刻切到该游戏的启动与详情页。四个页签、收藏、MOD 开关都能点。</span>
+    </span>
+    <span class="lf">app.html →</span>
+  </a>
+
+  <h2 class="sec">三屏静态稿（由 app.html 渲染）</h2>
+
+  <div class="grid">
+    <a class="card" href="app.html">
+      <img src="shot-01-library.png" alt="游戏库">
+      <div class="cap">
+        <div class="k">01</div>
+        <div class="t">游戏库</div>
+        <div class="d">侧栏上组是导航＋分类（八个一组），下组是所有游戏的列表；主区为封面墙。</div>
+        <div class="f">shot-01-library.png</div>
+      </div>
+    </a>
+
+    <a class="card" href="app.html">
+      <img src="shot-02-detail.png" alt="游戏详情">
+      <div class="cap">
+        <div class="k">02</div>
+        <div class="t">启动与详情</div>
+        <div class="d">点侧栏任意游戏即切入此页：横幅头图、启动动作区、四个页签，右侧信息卡与成就进度。</div>
+        <div class="f">shot-02-detail.png</div>
+      </div>
+    </a>
+
+    <a class="card" href="app.html">
+      <img src="shot-03-achievements.png" alt="成就">
+      <div class="cap">
+        <div class="k">03</div>
+        <div class="t">成就页签</div>
+        <div class="d">完成度环、四种筛选、稀有度条、隐藏成就遮蔽，跨游戏共用同一套布局。</div>
+        <div class="f">shot-03-achievements.png</div>
+      </div>
+    </a>
+  </div>
+
+  <div class="changes">
+    <h3>v2 相对 v1 改了什么</h3>
+    <ul>
+      <li><b>侧栏改成两段。</b>上半是一组导航：全部游戏 / 最近游玩 / 正在运行 / 收藏，紧接着四个分类（动作 / 角色扮演 / 独立 / 模拟），中间不再有「分类」小标题和分割线——分类是筛选的一部分，不是另一块区域。</li>
+      <li><b>下半是完整游戏列表，占满剩余高度，自己滚动。</b>它就是 Steam 游戏库那种列：小封面、名字、时长，还在跑的游戏带一个绿点。按哪个，右边就是哪个游戏。</li>
+      <li><b>点游戏＝进入启动与详情页。</b>不再有独立的「详情页」跳转，右区在库视图和游戏视图之间切换，左上角「返回游戏库」回去。</li>
+      <li><b>四个页签接上了实际内容。</b>概览 / 成就 / MOD / 启动选项，成就和 MOD 的筛选与开关都能点。</li>
+      <li><b>启动按钮与运行态联动。</b>点「开始游戏」变「切回游戏」，旁边出现结束按钮；退出后写回最近游玩。</li>
+      <li><b>列表与封面墙解耦。</b>侧栏列表始终是全量游戏（只被搜索影响）；封面墙才受导航、分类、平台筛选控制。</li>
+    </ul>
+  </div>
+
+  <div class="foot">
+    原型为纯 HTML/CSS/JS 静态稿，仅用于确认布局、层级与交互，不是产品代码。<br>
+    数据写死在 app.html 顶部，接 Tauri 后由 SQLite 与 Steam 接口提供；真实封面、截图、成就图标届时替换。
+  </div>
+</body>
+</html>
