@@ -32,7 +32,13 @@ export function Dialog({
   useEffect(() => {
     restoreRef.current = document.activeElement as HTMLElement | null;
     const box = boxRef.current;
-    const first = box?.querySelector<HTMLElement>(FOCUSABLE);
+    // 焦点优先给表单控件：弹层默认焦点落在右上角「关闭」时，Enter 会直接关窗，
+    // 键盘用户要 Tab 一整圈才能开始输入。
+    const formField =
+      box?.querySelector<HTMLElement>(
+        ".dialog-body input:not([disabled]), .dialog-body textarea:not([disabled]), .dialog-body select:not([disabled])",
+      ) ?? null;
+    const first = box?.querySelector<HTMLElement>("[data-autofocus]") ?? formField ?? box?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus();
 
     const onKey = (e: KeyboardEvent) => {

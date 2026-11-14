@@ -84,12 +84,14 @@ pub async fn import_scan(app: AppHandle, picks: Vec<ScanPick>) -> Result<Vec<Gam
 
     {
         let conn = state.db();
+        // 整批一个事务：中途失败不留「导了一半」的库，失败原因如实返回
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for p in &picks {
-            if find_by_exe(&conn, &p.exe_path).map_err(|e| e.to_string())?.is_some() {
+            if find_by_exe(&tx, &p.exe_path).map_err(|e| e.to_string())?.is_some() {
                 continue;
             }
             if let Some(appid) = p.appid {
-                if find_by_appid(&conn, appid).map_err(|e| e.to_string())?.is_some() {
+                if find_by_appid(&tx, appid).map_err(|e| e.to_string())?.is_some() {
                     continue;
                 }
             }
@@ -106,10 +108,10 @@ pub async fn import_scan(app: AppHandle, picks: Vec<ScanPick>) -> Result<Vec<Gam
                 cover_path: None,
                 banner_path: None,
             };
-            if let Ok(id) = insert_game(&conn, &new) {
-                ids.push((id, p.source == "steam"));
-            }
+            let id = insert_game(&tx, &new).map_err(|e| format!("导入「{}」失败：{e}", p.title))?;
+            ids.push((id, p.source == "steam"));
         }
+        tx.commit().map_err(|e| format!("导入写入失败：{e}"))?;
     }
 
     // 后台补齐 Steam 资料与封面（不阻塞导入）

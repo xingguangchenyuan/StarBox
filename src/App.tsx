@@ -49,6 +49,7 @@ export default function App() {
   // 后端事件
   useEffect(() => {
     let dispose: (() => void) | undefined;
+    let cancelled = false;
     void subscribeEvents({
       started: (p) => useApp.getState().markStarted(p.gameId, p.pid, p.startedAt),
       exited: (p) => {
@@ -80,9 +81,14 @@ export default function App() {
         if (gameId) void store.refreshGameAchievements(gameId);
       },
     }).then((d) => {
-      dispose = d;
+      // 订阅是异步的：组件在 resolve 之前卸载时，dispose 还是空，必须立刻退订
+      if (cancelled) d();
+      else dispose = d;
     });
-    return () => dispose?.();
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
   }, []);
 
   // 拖拽入库
@@ -124,9 +130,8 @@ export default function App() {
             return;
           }
           try {
-            // 拖入的若是文件夹，以它为工作目录；文件则用同目录
-            const isDir = !/\.(exe|lnk|bat|cmd)$/i.test(path);
-            const { game, existed } = await useApp.getState().addGame(path, isDir ? path : null);
+            // 走到这里一定是可执行文件；文件夹在上面已经转给「扫描候选」了
+            const { game, existed } = await useApp.getState().addGame(path, null);
             useApp.getState().select(game.id);
             if (existed) toast.info(t("toast.alreadyInLibrary"), `《${game.title}》`, t("toast.addedMeta"));
             else toast.info(t("toast.added"), `《${game.title}》`, t("toast.addedMeta"));

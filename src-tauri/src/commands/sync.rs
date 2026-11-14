@@ -72,9 +72,11 @@ fn b64_decode(s: &str) -> Option<Vec<u8>> {
 
 fn gse_date_to_rfc(raw: &str) -> Option<String> {
     let dt = chrono::NaiveDateTime::parse_from_str(raw.trim(), "%d/%m/%Y %H:%M:%S").ok()?;
+    // 本地成就文件记的是本机时间，但库里同一列还要和 Steam 的 UTC 时间比较排序，
+    // 统一换算成 UTC 后再写。
     dt.and_local_timezone(Local)
         .earliest()
-        .map(|d| d.to_rfc3339())
+        .map(|d| d.with_timezone(&Utc).to_rfc3339())
 }
 
 fn epoch_to_rfc(ts: i64) -> Option<String> {

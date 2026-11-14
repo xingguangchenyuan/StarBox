@@ -5,6 +5,7 @@ import { t } from "@/i18n/zh-CN";
 import { achPercent, fmtDuration, relDay } from "@/lib/format";
 import { IconChevronRight, IconPlay, IconScan, IconPlus } from "@/components/Icons";
 import { useUi } from "@/stores/ui";
+import { useClock } from "@/stores/clock";
 import { bannerUrl } from "@/components/art";
 
 export function LibraryHero() {
@@ -14,6 +15,8 @@ export function LibraryHero() {
   const select = useApp((s) => s.select);
   const open = useUi((s) => s.open);
   const showHidden = useApp((s) => s.settings?.showHidden ?? false);
+  // 订阅每秒的时钟，否则「已游玩 6 秒」会停在挂载那一刻
+  const now = useClock((s) => s.now);
 
   const visible = useMemo(() => games.filter((g) => !g.hidden || showHidden), [games, showHidden]);
 
@@ -70,7 +73,7 @@ export function LibraryHero() {
 
   const running = feature.running || !!sessions[feature.id];
   const sessionSec = sessions[feature.id]
-    ? Math.max(0, Math.floor((Date.now() - new Date(sessions[feature.id].startedAt).getTime()) / 1000))
+    ? Math.max(0, Math.floor((now - new Date(sessions[feature.id].startedAt).getTime()) / 1000))
     : 0;
   const cover = bannerUrl(feature);
   const pct = achPercent(feature);

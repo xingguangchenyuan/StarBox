@@ -207,12 +207,26 @@ export type BackendEvents = {
 
 export async function subscribeEvents(events: BackendEvents): Promise<() => void> {
   if (!isTauri) return () => {};
-  const unlisteners: UnlistenFn[] = [];
-  unlisteners.push(await listen("game://started", (e) => events.started(e.payload as never)));
-  unlisteners.push(await listen("game://exited", (e) => events.exited(e.payload as never)));
-  unlisteners.push(await listen("achievement://unlocked", (e) => events.unlocked(e.payload as never)));
-  unlisteners.push(await listen("achievement://synced", (e) => events.achievementsSynced(e.payload as never)));
-  unlisteners.push(await listen("scan://progress", (e) => events.scanProgress(e.payload as never)));
-  unlisteners.push(await listen("library://updated", (e) => events.libraryUpdated(e.payload as string)));
-  return () => unlisteners.forEach((un) => un());
+  // 六个监听一起注册：任何一路失败都把已注册的退掉，别留下半套监听。
+  const regs: Array<Promise<UnlistenFn>> = [
+    listen("game://started", (e) => events.started(e.payload as never)),
+    listen("game://exited", (e) => events.exited(e.payload as never)),
+    listen("achievement://unlocked", (e) => events.unlocked(e.payload as never)),
+    listen("achievement://synced", (e) => events.achievementsSynced(e.payload as never)),
+    listen("scan://progress", (e) => events.scanProgress(e.payload as never)),
+    listen("library://updated", (e) => events.libraryUpdated(e.payload as string)),
+  ];
+  try {
+    const unlisteners = await Promise.all(regs);
+    return () => unlisteners.forEach((un) => un());
+  } catch (e) {
+    for (const reg of regs) {
+      try {
+        (await reg)();
+      } catch {
+        /* 注册本身就失败了，没有可退订的 */
+      }
+    }
+    throw e;
+  }
 }

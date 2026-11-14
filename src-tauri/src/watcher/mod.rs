@@ -91,25 +91,44 @@ pub fn spawn_and_watch(
         anyhow::bail!("找不到可执行文件：{exe}");
     }
 
+    // Windows 的 CreateProcess 走 ANSI/宽字符路径，超过 260 字符就报「找不到路径」。
+    // 先试 8.3 短名把长度压回去；压不回去就明确告诉用户，而不是抛 os error 3。
+    let mut exe_cmd = exe_path.clone();
+    let mut dir_cmd = work_dir.as_ref().map(std::path::PathBuf::from).filter(|p| p.is_dir());
+    if crate::util::path_chars(&exe_cmd) > 250 {
+        if let Some(short) = crate::util::short_path(&exe_cmd) {
+            exe_cmd = short;
+        }
+    }
+    if let Some(dir) = dir_cmd.as_ref() {
+        if crate::util::path_chars(dir) > 250 {
+            if let Some(short) = crate::util::short_path(dir) {
+                dir_cmd = Some(short);
+            }
+        }
+    }
+    if crate::util::path_chars(&exe_cmd) > 259 {
+        anyhow::bail!(
+            "程序路径太长（{} 个字符），Windows 启动程序最多 260 个字符；把这个游戏移到更短的目录再试",
+            crate::util::path_chars(&exe_path)
+        );
+    }
+
     // .bat / .cmd 不能直接 CreateProcess，要交给 cmd 解释器
     let is_batch = ext == "bat" || ext == "cmd";
     let mut cmd = if is_batch {
         let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
         let mut c = Command::new(comspec);
-        c.arg("/C").arg("call").arg(&exe_path);
+        // 批处理本身也走短路径，否则 cmd 会读不到文件
+        c.arg("/C").arg("call").arg(&exe_cmd);
         c
     } else {
-        Command::new(&exe_path)
+        Command::new(&exe_cmd)
     };
 
-    if let Some(dir) = work_dir.as_ref().filter(|d| !d.trim().is_empty()) {
-        let p = std::path::Path::new(dir);
-        if p.is_dir() {
-            cmd.current_dir(p);
-        } else if let Some(parent) = exe_path.parent() {
-            cmd.current_dir(parent);
-        }
-    } else if let Some(parent) = exe_path.parent() {
+    if let Some(dir) = dir_cmd.as_ref() {
+        cmd.current_dir(dir);
+    } else if let Some(parent) = exe_cmd.parent() {
         cmd.current_dir(parent);
     }
     if let Some(raw) = args.as_ref().filter(|a| !a.trim().is_empty()) {

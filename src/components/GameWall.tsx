@@ -299,8 +299,10 @@ export function GameWall() {
   };
 
   const pickSort = (k: SortKey) => {
+    const active = sort === k;
     useApp.getState().setSort(k);
-    setDir(null);
+    // 点已激活的列 = 切升降序（表头箭头跟着翻），其它列回到默认方向
+    setDir(active ? (isAsc ? "desc" : "asc") : null);
   };
 
   const hourText = totals.hours >= 1000 ? Math.round(totals.hours) : totals.hours.toFixed(1);

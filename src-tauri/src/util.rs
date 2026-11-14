@@ -397,6 +397,38 @@ pub fn clean_path(raw: &str) -> String {
     trimmed.to_string()
 }
 
+/// 路径的字符数（Windows 的上限是按字符算的）
+pub fn path_chars(p: &Path) -> usize {
+    p.to_string_lossy().chars().count()
+}
+
+/// 取 8.3 短路径。游戏装在很深的目录里时，短名能把长度压回 260 以内。
+/// 卷上关掉了 8.3 名称时返回 None。
+#[cfg(windows)]
+pub fn short_path(p: &Path) -> Option<PathBuf> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+
+    let wide: Vec<u16> = p.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let mut buf = vec![0u16; 1024];
+    let n = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+    if n == 0 || n as usize >= buf.len() {
+        return None;
+    }
+    let short = PathBuf::from(std::ffi::OsString::from_wide(&buf[..n as usize]));
+    // 没缩短就没意义（很多卷只对父目录的一部分给短名）
+    if path_chars(&short) < path_chars(p) {
+        Some(short)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(windows))]
+pub fn short_path(_p: &Path) -> Option<PathBuf> {
+    None
+}
+
 pub fn exe_stem(path: &str) -> String {
     Path::new(path)
         .file_stem()
