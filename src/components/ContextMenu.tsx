@@ -34,6 +34,13 @@ export function ContextMenu({
 
   useEffect(() => {
     const close = () => onClose();
+    // 用 mousedown 而不是 click 判断「点外面」：
+    // 菜单常常是被一次 click 打开的，如果在 window 上监听 click，
+    // 这次打开它的 click 冒泡到 window 时菜单已经挂载，会立刻把自己关掉。
+    const onDown = (e: MouseEvent) => {
+      if (ref.current?.contains(e.target as Node)) return;
+      onClose();
+    };
     const items = () =>
       Array.from(ref.current?.querySelectorAll<HTMLButtonElement>(".ctx-item:not([disabled])") ?? []);
     const onKey = (e: KeyboardEvent) => {
@@ -50,13 +57,13 @@ export function ContextMenu({
       const next = i < 0 ? nodes[0] : nodes[(i + step + nodes.length) % nodes.length];
       next.focus();
     };
-    window.addEventListener("click", close);
+    window.addEventListener("mousedown", onDown, true);
     window.addEventListener("contextmenu", close);
     window.addEventListener("keydown", onKey);
     window.addEventListener("blur", close);
     items()[0]?.focus();
     return () => {
-      window.removeEventListener("click", close);
+      window.removeEventListener("mousedown", onDown, true);
       window.removeEventListener("contextmenu", close);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", close);
