@@ -387,8 +387,8 @@ export function GameView({ gameId }: { gameId: string }) {
               label: game.hidden ? t("game.showHidden") : t("game.hidden"),
               onSelect: () => {
                 void (async () => {
-                  await api.setHidden(game.id, !game.hidden);
-                  await reload();
+                  const ok = await useApp.getState().setHidden(game.id, !game.hidden);
+                  if (!ok) return;
                   toast.info(game.hidden ? t("game.showHidden") : t("game.hidden"), game.title);
                   if (!game.hidden) select(null);
                 })();

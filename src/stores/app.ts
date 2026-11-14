@@ -67,6 +67,7 @@ interface AppState {
   setViewMode: (m: "grid" | "list") => void;
   setCardSize: (s: "standard" | "large") => void;
   toggleFavorite: (id: string) => Promise<void>;
+  setHidden: (gameId: string, hidden: boolean) => Promise<boolean>;
   toggleTag: (gameId: string, tagId: number) => Promise<void>;
   launch: (id: string) => Promise<{ ok: boolean; error?: string; focused?: boolean }>;
   stop: (id: string) => Promise<void>;
@@ -245,6 +246,18 @@ export const useApp = create<AppState>((set, get) => ({
       // 后端没写进去就别让星标停在假状态
       set((s) => ({ games: s.games.map((x) => (x.id === id ? { ...x, favorite: !favorite } : x)) }));
       toast.warn("收藏失败", String(e));
+    }
+  },
+
+  /** 隐藏/取消隐藏：写失败要告诉用户，界面也不能假装已经隐藏。 */
+  async setHidden(gameId, hidden) {
+    try {
+      await api.setHidden(gameId, hidden);
+      await get().reload();
+      return true;
+    } catch (e) {
+      toast.warn(hidden ? "隐藏失败" : "取消隐藏失败", String(e));
+      return false;
     }
   },
 

@@ -22,7 +22,6 @@ export function Rail() {
   const setView = useApp((s) => s.setView);
   const select = useApp((s) => s.select);
   const setQuery = useApp((s) => s.setQuery);
-  const reload = useApp((s) => s.reload);
   const toggleFavorite = useApp((s) => s.toggleFavorite);
   const removeGame = useApp((s) => s.removeGame);
   const open = useUi((s) => s.open);
@@ -237,10 +236,7 @@ export function Rail() {
             {
               label: menu.game.hidden ? t("game.showHidden") : t("game.hidden"),
               onSelect: () => {
-                void (async () => {
-                  await api.setHidden(menu.game.id, !menu.game.hidden);
-                  await reload();
-                })();
+                void useApp.getState().setHidden(menu.game.id, !menu.game.hidden);
               },
             },
             {

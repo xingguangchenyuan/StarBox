@@ -201,7 +201,6 @@ export function GameWall() {
   const setQuery = useApp((s) => s.setQuery);
   const select = useApp((s) => s.select);
   const removeGame = useApp((s) => s.removeGame);
-  const reload = useApp((s) => s.reload);
   const open = useUi((s) => s.open);
   const wallRef = useRef<HTMLDivElement>(null);
   const filtersRef = useRef("");
@@ -450,10 +449,7 @@ export function GameWall() {
             {
               label: menu.game.hidden ? t("game.showHidden") : t("game.hidden"),
               onSelect: () => {
-                void (async () => {
-                  await api.setHidden(menu.game.id, !menu.game.hidden);
-                  await reload();
-                })();
+                void useApp.getState().setHidden(menu.game.id, !menu.game.hidden);
               },
             },
             { separator: true },
