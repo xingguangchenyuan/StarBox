@@ -781,6 +781,7 @@ textarea {
 
 .ctx-sep {
   height: 1px;
+  flex: 0 0 auto;
   margin: 5px 6px;
   background: var(--line-soft);
 }
@@ -3179,8 +3180,10 @@ input.field:focus {
   }
 }
 
+/* 用 backwards 而不是 both：动画结束后不再保留 transform，
+   否则这个容器会一直成为 position: fixed 子元素的包含块（并带来额外合成层） */
 .view-in {
-  animation: viewIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: viewIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3286,6 +3289,7 @@ input.field:focus {
   position: fixed;
   z-index: 300;
   width: 196px;
+  max-width: calc(100vw - 16px);
   padding: 5px;
   background: #121b26;
   border: 1px solid var(--line);
@@ -3294,10 +3298,15 @@ input.field:focus {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  /* 窗口太矮时菜单滚动，而不是被视口切掉 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .ctx-item {
   height: 30px;
+  /* 窗口太矮时让菜单滚动，而不是把每一行压扁 */
+  flex: 0 0 auto;
   padding: 0 10px;
   text-align: left;
   border-radius: 6px;
