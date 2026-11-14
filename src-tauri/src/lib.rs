@@ -26,7 +26,7 @@ pub fn run() {
             db_path.display()
         )),
     };
-    if let Err(e) = db::init(&conn) {
+    if let Err(e) = db::init(&conn, &db_path) {
         fatal(&format!(
             "数据库初始化失败：{e}\n\n路径：{}\n\n如果反复出现，可以备份后删除该文件再启动。",
             db_path.display()

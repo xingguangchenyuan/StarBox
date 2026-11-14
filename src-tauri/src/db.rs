@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::models::{Achievement, Game, ModEntry, Tag, Trailer};
 
@@ -121,7 +122,7 @@ fn migrate_foreign_keys(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn init(conn: &Connection) -> Result<()> {
+pub fn init(conn: &Connection, db_path: &Path) -> Result<()> {
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
@@ -286,6 +287,57 @@ pub fn init(conn: &Connection) -> Result<()> {
         }
         set_setting(conn, "tags_seeded", "1")?;
     }
+
+    // 老版本的本地成就时间是本地时区（+08:00），和 Steam 的 UTC 混在一列排序。
+    // 一次性改成 UTC；有改动时先做一份一致性的库备份。
+    if let Err(e) = migrate_achievement_times(conn, db_path) {
+        eprintln!("成就时间迁移失败，保留原值：{e}");
+    }
+    Ok(())
+}
+
+/// 成就解锁时间统一成 UTC（幂等，只跑一次）。
+fn migrate_achievement_times(conn: &Connection, db_path: &Path) -> Result<()> {
+    if get_setting(conn, "ach_utc_v1").ok().flatten().is_some() {
+        return Ok(());
+    }
+
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT id, unlocked_at FROM achievements WHERE unlocked_at IS NOT NULL AND unlocked_at <> ''")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let pending: Vec<(i64, String)> = rows
+        .into_iter()
+        .filter_map(|(id, raw)| {
+            let dt = chrono::DateTime::parse_from_rfc3339(&raw).ok()?;
+            if dt.offset().local_minus_utc() == 0 {
+                return None;
+            }
+            Some((id, dt.with_timezone(&Utc).to_rfc3339()))
+        })
+        .collect();
+
+    if pending.is_empty() {
+        let _ = set_setting(conn, "ach_utc_v1", "1");
+        return Ok(());
+    }
+
+    // 动历史数据前先留一份备份：VACUUM INTO 得到的是完整一致快照
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let backup = db_path.with_file_name(format!("starbox-before-utc-{stamp}.db"));
+    if let Err(e) = conn.execute("VACUUM INTO ?1", params![backup.to_string_lossy()]) {
+        eprintln!("备份到 {} 失败（继续迁移）：{e}", backup.display());
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    for (id, value) in &pending {
+        tx.execute("UPDATE achievements SET unlocked_at = ?1 WHERE id = ?2", params![value, id])?;
+    }
+    tx.commit()?;
+    let _ = set_setting(conn, "ach_utc_v1", "1");
+    eprintln!("已把 {} 条成就时间统一为 UTC（备份：{}）", pending.len(), backup.display());
     Ok(())
 }
 
